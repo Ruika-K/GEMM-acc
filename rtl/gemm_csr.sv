@@ -55,7 +55,7 @@ module gemm_csr #(
     output logic [DIM_W-1:0] n_o,
     output logic             bias_en_o,
 
-    // Requests (one-cycle pulses, already checked)
+    // Requests (one-cycle pulses, already checked, registered)
     output logic             start_o,
     output logic             load_a_o,
     output logic             load_b_o,
@@ -144,6 +144,7 @@ module gemm_csr #(
     assign dims_run_ok  = (m_o != '0) && (n_o != '0) && k_ok;
 
     logic ctrl_wr, req_start, req_a, req_b, req_bias, req_bad;
+    logic acc_start, acc_a, acc_b, acc_bias;
     assign ctrl_wr   = wr && (waddr_q == A_CTRL);
     assign req_start = ctrl_wr && ctrl_w[0];
     assign req_a     = ctrl_wr && ctrl_w[1];
@@ -154,12 +155,31 @@ module gemm_csr #(
     logic one_hot;
     assign one_hot     = (ctrl_w == 4'b0001) || (ctrl_w == 4'b0010) ||
                          (ctrl_w == 4'b0100) || (ctrl_w == 4'b1000);
-    assign start_o     = req_start && one_hot && !locked && dims_run_ok;
-    assign load_a_o    = req_a     && one_hot && !locked && dims_a_ok;
-    assign load_b_o    = req_b     && one_hot && !locked && dims_b_ok;
-    assign load_bias_o = req_bias  && one_hot && !locked && dims_bias_ok;
-    assign req_bad     = ctrl_wr && (ctrl_w != 4'b0000) &&
-                         !(start_o || load_a_o || load_b_o || load_bias_o);
+    assign acc_start = req_start && one_hot && !locked && dims_run_ok;
+    assign acc_a     = req_a     && one_hot && !locked && dims_a_ok;
+    assign acc_b     = req_b     && one_hot && !locked && dims_b_ok;
+    assign acc_bias  = req_bias  && one_hot && !locked && dims_bias_ok;
+    assign req_bad   = ctrl_wr && (ctrl_w != 4'b0000) &&
+                       !(acc_start || acc_a || acc_b || acc_bias);
+
+    // The status bits react to an accepted request at once, so the next
+    // register access already sees BUSY or LOADING. The pulses that go to the
+    // rest of the design are registered: the path from the AXI write logic
+    // through the legality checks would otherwise continue into the
+    // sequencer, the loader and four tile iterators.
+    always_ff @(posedge clk) begin
+        if (!rst_n) begin
+            start_o     <= 1'b0;
+            load_a_o    <= 1'b0;
+            load_b_o    <= 1'b0;
+            load_bias_o <= 1'b0;
+        end else begin
+            start_o     <= acc_start;
+            load_a_o    <= acc_a;
+            load_b_o    <= acc_b;
+            load_bias_o <= acc_bias;
+        end
+    end
 
     always_ff @(posedge clk) begin
         if (!rst_n) begin
@@ -183,7 +203,7 @@ module gemm_csr #(
                 endcase
             end
 
-            if (start_o) begin
+            if (acc_start) begin
                 busy_o   <= 1'b1;
                 done_o   <= 1'b0;
                 cycles_q <= '0;
@@ -195,7 +215,7 @@ module gemm_csr #(
                 end
             end
 
-            if (load_a_o || load_b_o || load_bias_o) loading_q <= 1'b1;
+            if (acc_a || acc_b || acc_bias) loading_q <= 1'b1;
             else if (load_done_i)                    loading_q <= 1'b0;
 
             if (req_bad || load_err_i)                                      err_q <= 1'b1;

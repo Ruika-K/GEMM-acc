@@ -62,7 +62,8 @@ def jobs():
         )
     # The same arrays with multipliers built from LUTs. ECP5 multiplier blocks
     # sit in a few fixed rows, which hides the effect of the array wiring.
-    for n in (4, 8, 12, 16):
+    # 16 x 16 needs 88k LUT4 this way and does not fit the 85F.
+    for n in (4, 8, 12):
         for name, bcast in (("sys", 0), ("bcast", 1)):
             out[f"{name}_{n}_lut"] = dict(
                 top="syn_array_harness",

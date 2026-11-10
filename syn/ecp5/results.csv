@@ -1,3 +1,18 @@
 job,top,params,mult,fmax_mhz,fmax_min_mhz,lut4,ff,mult18,bram,lutram,carry,synth_s,pnr_s
+sys_2,syn_array_harness,BCAST=0 ROWS=2 COLS=2 PE_PIPE=1,block,183.2,181.4,204,363,4,0,0,64,2,7
+bcast_2,syn_array_harness,BCAST=1 ROWS=2 COLS=2 PE_PIPE=1,block,180.4,173.0,199,361,4,0,0,64,1,8
 sys_4,syn_array_harness,BCAST=0 ROWS=4 COLS=4 PE_PIPE=1,block,155.5,138.6,680,1117,16,0,0,256,2,32
-top_8,gemm_top,ROWS=8 COLS=8 PE_PIPE=1,block,112.1,104.5,4172,8058,64,16,65,1269,20,255
+bcast_4,syn_array_harness,BCAST=1 ROWS=4 COLS=4 PE_PIPE=1,block,158.6,157.2,649,1101,16,0,0,256,3,45
+sys_8,syn_array_harness,BCAST=0 ROWS=8 COLS=8 PE_PIPE=1,block,121.8,106.7,2448,3801,64,0,0,1024,10,174
+bcast_8,syn_array_harness,BCAST=1 ROWS=8 COLS=8 PE_PIPE=1,block,129.5,124.9,2317,3733,64,0,0,1024,8,163
+sys_12,syn_array_harness,BCAST=0 ROWS=12 COLS=12 PE_PIPE=1,block,93.1,83.8,5304,8053,144,0,0,2304,21,776
+bcast_12,syn_array_harness,BCAST=1 ROWS=12 COLS=12 PE_PIPE=1,block,110.6,89.5,5009,7901,144,0,0,2304,15,759
+sys_8_nopipe,syn_array_harness,BCAST=0 ROWS=8 COLS=8 PE_PIPE=0,block,83.7,77.3,2439,2768,64,0,0,1024,8,178
+bcast_8_nopipe,syn_array_harness,BCAST=1 ROWS=8 COLS=8 PE_PIPE=0,block,85.0,83.3,2315,2707,64,0,0,1024,7,160
+sys_4_lut,syn_array_harness,BCAST=0 ROWS=4 COLS=4 PE_PIPE=1,lut,143.3,142.1,5476,1117,0,0,0,384,9,129
+bcast_4_lut,syn_array_harness,BCAST=1 ROWS=4 COLS=4 PE_PIPE=1,lut,141.4,138.8,5419,1101,0,0,0,384,8,129
+sys_8_lut,syn_array_harness,BCAST=0 ROWS=8 COLS=8 PE_PIPE=1,lut,122.4,115.8,22302,3801,0,0,0,1536,45,877
+bcast_8_lut,syn_array_harness,BCAST=1 ROWS=8 COLS=8 PE_PIPE=1,lut,119.8,117.6,21421,3733,0,0,0,1536,31,711
+sys_12_lut,syn_array_harness,BCAST=0 ROWS=12 COLS=12 PE_PIPE=1,lut,104.3,99.3,49802,8053,0,0,0,3456,135,2886
+bcast_12_lut,syn_array_harness,BCAST=1 ROWS=12 COLS=12 PE_PIPE=1,lut,107.6,96.5,47973,7901,0,0,0,3456,72,2263
+top_8,gemm_top,ROWS=8 COLS=8 PE_PIPE=1,block,114.7,111.3,4124,8062,64,16,65,1269,19,216

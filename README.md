@@ -12,8 +12,9 @@ C[M x N] = A[M x K] * B[K x N] + bias[N]
 Work in progress. The RTL is functionally complete and verified in simulation:
 `gemm_top` takes matrices of run-time size over AXI4-Stream, stores them in
 on-chip memories, tiles them over the array and streams the result back, with
-AXI4-Lite registers for control. There are no synthesis results yet; that is
-the next step of the roadmap in [docs/spec.md](docs/spec.md).
+AXI4-Lite registers for control. First implementation results, from an
+open-source flow on a Lattice ECP5, are in [docs/results.md](docs/results.md);
+Xilinx results are still to come.
 
 ## Design in brief
 
@@ -61,6 +62,8 @@ rtl/gemm_out.sv       result serialiser
 rtl/gemm_csr.sv       AXI4-Lite registers
 rtl/gemm_top.sv       top level
 tb/                   cocotb tests, pytest runner, host model (gemm_host.py)
+syn/                  synthesis flows, baseline array, array harness
+docs/results.md       implementation results
 docs/spec.md          specification and roadmap
 ```
 
