@@ -8,6 +8,12 @@
 //     accumulators of a column form a south -> north shift register, which is
 //     used both to drain results and to preload the next addend (D).
 //
+// With PE_PIPE = 1 the accumulator sits one pipeline stage behind the
+// multiplier, so the shift control is taken one stage later as well (from the
+// forwarding register). Seen from outside, operands and shift control then
+// have the same latency to the accumulator and the phase spacing rules do not
+// depend on PE_PIPE.
+//
 // Only control registers are reset. Datapath registers (a, b, product,
 // accumulator) are initialised by the protocol: every tile starts with a
 // shift phase that overwrites the accumulators.
@@ -70,6 +76,7 @@ module gemm_pe #(
 
     logic                     mac_valid;
     logic signed [PROD_W-1:0] mac_prod;
+    logic                     acc_shift;
 
     generate
         if (PE_PIPE != 0) begin : g_pipe
@@ -87,9 +94,11 @@ module gemm_pe #(
 
             assign mac_valid = prod_valid_q;
             assign mac_prod  = prod_q;
+            assign acc_shift = shift_o;
         end else begin : g_nopipe
             assign mac_valid = a_valid_i;
             assign mac_prod  = prod;
+            assign acc_shift = shift_i;
         end
     endgenerate
 
@@ -99,7 +108,7 @@ module gemm_pe #(
     logic signed [ACC_W-1:0] acc_q;
 
     always_ff @(posedge clk) begin
-        if (shift_i) begin
+        if (acc_shift) begin
             acc_q <= c_i;
         end else if (mac_valid) begin
             acc_q <= acc_q + {{(ACC_W - PROD_W){mac_prod[PROD_W-1]}}, mac_prod};

@@ -14,15 +14,16 @@
 //   B[k][j] on b_i[j] at cycle t0 + j + k   (column j delayed by j cycles)
 // so that both operands of A[i][k] * B[k][j] meet in PE(i, j).
 //
-// Shift phase: hold shift_i high for ROWS cycles starting at cycle ts.
-// Column j shifts during cycles ts + j .. ts + j + ROWS - 1. In cycle
-// ts + j + r, c_o[j] carries row r of the previous result and c_i[j] must
-// carry row r of the next addend.
+// Shift phase: ROWS shift beats (cycles with shift_i high), not necessarily
+// consecutive. A beat presented at cycle s shifts column j in cycle
+// s + j + PE_PIPE. In that cycle c_valid_o[j] is high, c_o[j] carries the next
+// row of the previous result and c_i[j] must carry the next row of the new
+// addend. Row 0 goes first in both directions.
 //
-// Required spacing (see docs/spec.md):
-//   t0      >= ts + ROWS - PE_PIPE
-//   ts_next >= t0 + K + ROWS - 1 + PE_PIPE
-// so the minimum tile period is K + 2 * ROWS - 1 cycles for either PE_PIPE.
+// Required spacing (see docs/spec.md), independent of PE_PIPE:
+//   first operand slot  >  last shift beat of the preload
+//   next shift beat     >= last operand slot + ROWS
+// so the minimum tile period is K + 2 * ROWS - 1 cycles.
 // -----------------------------------------------------------------------------
 module gemm_array #(
     parameter int DATA_W  = 8,
@@ -72,8 +73,8 @@ module gemm_array #(
             assign b[0][j]      = b_i[j];
             assign c[ROWS][j]   = c_i[j];
             assign c_o[j]       = c[0][j];
-            // A column is being drained exactly while its shift control is high.
-            assign c_valid_o[j] = sh[0][j];
+            // A column is being drained exactly while its accumulators shift.
+            assign c_valid_o[j] = sh[0][j + PE_PIPE];
         end
 
         for (genvar i = 0; i < ROWS; i++) begin : g_row

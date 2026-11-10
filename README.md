@@ -9,10 +9,10 @@ C[M x N] = A[M x K] * B[K x N] + D[M x N]
 
 ## Status
 
-Work in progress. The processing element and the `ROWS x COLS` array are
-implemented and verified in simulation. Skew buffers, controller, tiling, AXI
-interfaces and synthesis results are still to come; see the roadmap in
-[docs/spec.md](docs/spec.md).
+Work in progress. `gemm_core` computes one tile (`m <= ROWS`, `n <= COLS`, any
+`k`) end to end behind valid / ready streams and is verified in simulation.
+Tiling for larger matrices, AXI interfaces and synthesis results are still to
+come; see the roadmap in [docs/spec.md](docs/spec.md).
 
 ## Design in brief
 
@@ -25,16 +25,25 @@ interfaces and synthesis results are still to come; see the roadmap in
   each column form a shift register: results leave at the north edge while the
   addend D of the next tile enters at the south edge.
 * **Array size and matrix size are decoupled.** `ROWS`, `COLS`, `DATA_W`,
-  `ACC_W` are compile-time parameters; `M`, `K`, `N` are run-time values.
+  `ACC_W` are compile-time parameters; `m`, `n`, `k` are run-time values.
+* **No global stall.** The controller only decides whether to issue a shift
+  beat or an operand beat in each cycle. A stalled input or output stream means
+  fewer beats, never a frozen array.
+* **Credit-based output.** Results need several cycles to leave the array, so
+  the controller reserves an output FIFO slot before it releases a row.
 
-The exact timing contract of the array is in
-[docs/spec.md](docs/spec.md#4-array-timing-contract-done).
+The exact timing contract of the array and the core interface are in
+[docs/spec.md](docs/spec.md).
 
 ## Repository layout
 
 ```
 rtl/gemm_pe.sv        processing element
 rtl/gemm_array.sv     ROWS x COLS mesh of PEs
+rtl/gemm_delay.sv     delay line for skew and de-skew
+rtl/gemm_fifo.sv      output FIFO
+rtl/gemm_ctrl.sv      tile sequencer and output credits
+rtl/gemm_core.sv      one-tile GEMM engine (top level so far)
 tb/                   cocotb tests and pytest runner
 docs/spec.md          specification and roadmap
 ```
@@ -55,5 +64,6 @@ make lint
 make test
 ```
 
-`make test` builds and simulates the array for several `(ROWS, COLS, PE_PIPE)`
-combinations and checks every result against numpy.
+`make test` builds and simulates the array and the core for several parameter
+combinations and checks every result against numpy. Set `TB_SEED` to change
+the random seed.

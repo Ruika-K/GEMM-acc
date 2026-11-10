@@ -14,6 +14,8 @@ import numpy as np
 from cocotb.clock import Clock
 from cocotb.triggers import ReadOnly, RisingEdge
 
+from util import pack, random_matrix, to_signed
+
 
 class ArrayParams:
     def __init__(self, dut):
@@ -35,15 +37,19 @@ class Schedule:
         self.shift = set()
         self.length = 0
 
-    def add_shift(self, ts, d):
-        """Shift phase starting at west-edge cycle ts, preloading matrix d."""
+    def add_shift(self, ts, d, slots=None):
+        """Shift phase starting at west-edge cycle ts, preloading matrix d.
+        slots[r] is the time slot of shift beat r; gaps are stalled beats."""
         p = self.p
-        for r in range(p.rows):
-            self.shift.add(ts + r)
+        if slots is None:
+            slots = list(range(p.rows))
+        for r, s in enumerate(slots):
+            self.shift.add(ts + s)
             for j in range(p.cols):
-                # Column j sees the shift control j cycles later.
-                self.c[(ts + j + r, j)] = int(d[r, j])
-        self.length = max(self.length, ts + p.rows + p.cols)
+                # Column j shifts j cycles later, plus the PE pipeline stage.
+                self.c[(ts + s + j + p.pipe, j)] = int(d[r, j])
+        self.length = max(self.length, ts + slots[-1] + p.cols + p.pipe + 1)
+        return slots[-1] + 1  # number of slots consumed
 
     def add_compute(self, t0, a, b, slots=None):
         """Feed A (rows x K) and B (K x cols). slots[k] is the time slot used by
@@ -59,19 +65,6 @@ class Schedule:
                 self.b[(t0 + j + s, j)] = int(b[k, j])
         self.length = max(self.length, t0 + slots[-1] + p.rows + p.cols)
         return slots[-1] + 1  # number of slots consumed
-
-
-def pack(values, width):
-    """Pack a list of signed ints into one flat vector, element 0 at the LSB."""
-    mask = (1 << width) - 1
-    word = 0
-    for idx, v in enumerate(values):
-        word |= (v & mask) << (idx * width)
-    return word
-
-
-def to_signed(value, width):
-    return value - (1 << width) if value & (1 << (width - 1)) else value
 
 
 async def reset(dut):
@@ -123,18 +116,6 @@ async def play(dut, p, sched, rng):
     return drained
 
 
-def random_matrix(rng, shape, width, mode="random"):
-    lo, hi = -(1 << (width - 1)), (1 << (width - 1)) - 1
-    if mode == "min":
-        return np.full(shape, lo, dtype=np.int64)
-    if mode == "max":
-        return np.full(shape, hi, dtype=np.int64)
-    return np.array(
-        [[rng.randint(lo, hi) for _ in range(shape[1])] for _ in range(shape[0])],
-        dtype=np.int64,
-    )
-
-
 async def run_tiles(dut, tiles, extra_gap=0, bubbles=False, seed=0):
     """Run a list of (A, B, D) tiles back to back and check C = A @ B + D.
 
@@ -146,29 +127,30 @@ async def run_tiles(dut, tiles, extra_gap=0, bubbles=False, seed=0):
     cocotb.start_soon(Clock(dut.clk, 10, unit="ns").start())
     await reset(dut)
 
+    def gapped(count):
+        if not bubbles:
+            return None
+        slots, s = [], 0
+        for _ in range(count):
+            s += rng.choice([0, 0, 1, 3])
+            slots.append(s)
+            s += 1
+        return slots
+
     sched = Schedule(p)
     ts = 0
     for a, b, d in tiles:
         ts += rng.randint(0, extra_gap)
-        sched.add_shift(ts, d)
-        # Earliest legal start. With PE_PIPE the product register delays the
-        # first accumulation by one cycle, so the operands may enter one cycle
-        # before the shift phase has finished.
-        t0 = ts + p.rows - p.pipe + rng.randint(0, extra_gap)
-        slots = None
-        if bubbles:
-            slots, s = [], 0
-            for _ in range(a.shape[1]):
-                s += rng.choice([0, 0, 1, 3])
-                slots.append(s)
-                s += 1
-        used = sched.add_compute(t0, a, b, slots)
-        # Earliest legal next shift: the last product of the last row must
-        # have been accumulated.
-        ts = t0 + used + p.rows - 1 + p.pipe
+        used = sched.add_shift(ts, d, gapped(p.rows))
+        # Earliest legal start: the slot right after the last shift beat.
+        t0 = ts + used + rng.randint(0, extra_gap)
+        used = sched.add_compute(t0, a, b, gapped(a.shape[1]))
+        # Earliest legal next shift: the last operand of the last row (which
+        # enters ROWS - 1 cycles after row 0) must have been accumulated.
+        ts = t0 + used + p.rows - 1
     # Final shift phase drains the last tile.
     ts += rng.randint(0, extra_gap)
-    sched.add_shift(ts, np.zeros((p.rows, p.cols), dtype=np.int64))
+    sched.add_shift(ts, np.zeros((p.rows, p.cols), dtype=np.int64), gapped(p.rows))
 
     drained = await play(dut, p, sched, rng)
 
@@ -233,7 +215,7 @@ async def idle_gaps(dut):
 
 @cocotb.test()
 async def bubbles_in_stream(dut):
-    """Empty time slots inside the operand stream (valid low) are ignored."""
+    """Empty slots in the operand stream and stalled shift beats are harmless."""
     p = ArrayParams(dut)
     rng = random.Random(SEED + 3)
     await run_tiles(
