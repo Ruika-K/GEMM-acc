@@ -21,6 +21,16 @@ CORE_SOURCES = ARRAY_SOURCES + [
     RTL / "gemm_core.sv",
 ]
 
+TOP_SOURCES = CORE_SOURCES + [
+    RTL / "gemm_mem.sv",
+    RTL / "gemm_tile_iter.sv",
+    RTL / "gemm_load.sv",
+    RTL / "gemm_seq.sv",
+    RTL / "gemm_out.sv",
+    RTL / "gemm_csr.sv",
+    RTL / "gemm_top.sv",
+]
+
 ARRAY_CONFIGS = [
     # rows, cols, pe_pipe
     (4, 4, 1),
@@ -42,6 +52,17 @@ CORE_CONFIGS = [
     (5, 2, 0, 1),   # single-entry FIFO
     (2, 6, 1, 16),  # FIFO larger than a tile
     (1, 3, 0, 1),   # single row: no wait state
+    (1, 1, 1, 1),
+]
+
+
+TOP_CONFIGS = [
+    # rows, cols, pe_pipe, out_depth
+    (4, 4, 1, 4),
+    (8, 8, 1, 8),
+    (3, 5, 0, 3),
+    (5, 3, 1, 2),   # output FIFO smaller than a tile
+    (2, 2, 0, 2),
     (1, 1, 1, 1),
 ]
 
@@ -82,5 +103,15 @@ def test_gemm_core(rows, cols, pipe, depth):
         "gemm_core",
         CORE_SOURCES,
         "test_gemm_core",
+        {"ROWS": rows, "COLS": cols, "PE_PIPE": pipe, "OUT_DEPTH": depth},
+    )
+
+
+@pytest.mark.parametrize("rows,cols,pipe,depth", TOP_CONFIGS)
+def test_gemm_top(rows, cols, pipe, depth):
+    simulate(
+        "gemm_top",
+        TOP_SOURCES,
+        "test_gemm_top",
         {"ROWS": rows, "COLS": cols, "PE_PIPE": pipe, "OUT_DEPTH": depth},
     )

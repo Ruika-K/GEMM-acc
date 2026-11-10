@@ -4,15 +4,16 @@ A parameterised integer matrix-multiply accelerator built around an
 output-stationary systolic array, written in SystemVerilog.
 
 ```
-C[M x N] = A[M x K] * B[K x N] + D[M x N]
+C[M x N] = A[M x K] * B[K x N] + bias[N]
 ```
 
 ## Status
 
-Work in progress. `gemm_core` computes one tile (`m <= ROWS`, `n <= COLS`, any
-`k`) end to end behind valid / ready streams and is verified in simulation.
-Tiling for larger matrices, AXI interfaces and synthesis results are still to
-come; see the roadmap in [docs/spec.md](docs/spec.md).
+Work in progress. The RTL is functionally complete and verified in simulation:
+`gemm_top` takes matrices of run-time size over AXI4-Stream, stores them in
+on-chip memories, tiles them over the array and streams the result back, with
+AXI4-Lite registers for control. There are no synthesis results yet; that is
+the next step of the roadmap in [docs/spec.md](docs/spec.md).
 
 ## Design in brief
 
@@ -32,8 +33,16 @@ come; see the roadmap in [docs/spec.md](docs/spec.md).
 * **Credit-based output.** Results need several cycles to leave the array, so
   the controller reserves an output FIFO slot before it releases a row.
 
-The exact timing contract of the array and the core interface are in
-[docs/spec.md](docs/spec.md).
+* **Memories shaped like the array edge.** One memory word holds a whole column
+  segment of A or row segment of B, so operands arrive at one beat per cycle.
+  The host still sends plain row-major data; all address arithmetic is done
+  with counters and adders.
+* **One tile iterator per stream.** Commands, operands, bias and results each
+  walk the tile sequence at their own pace, which keeps the streams decoupled
+  and lets the next tile be queued while the current one is computing.
+
+The timing contract of the array, the register map and the host sequence are
+in [docs/spec.md](docs/spec.md).
 
 ## Repository layout
 
@@ -43,8 +52,15 @@ rtl/gemm_array.sv     ROWS x COLS mesh of PEs
 rtl/gemm_delay.sv     delay line for skew and de-skew
 rtl/gemm_fifo.sv      output FIFO
 rtl/gemm_ctrl.sv      tile sequencer and output credits
-rtl/gemm_core.sv      one-tile GEMM engine (top level so far)
-tb/                   cocotb tests and pytest runner
+rtl/gemm_core.sv      one-tile GEMM engine
+rtl/gemm_mem.sv       operand memory with lane writes
+rtl/gemm_load.sv      input stream to memory layout
+rtl/gemm_tile_iter.sv tile iterator
+rtl/gemm_seq.sv       commands, operands and bias for the core
+rtl/gemm_out.sv       result serialiser
+rtl/gemm_csr.sv       AXI4-Lite registers
+rtl/gemm_top.sv       top level
+tb/                   cocotb tests, pytest runner, host model (gemm_host.py)
 docs/spec.md          specification and roadmap
 ```
 
@@ -64,6 +80,6 @@ make lint
 make test
 ```
 
-`make test` builds and simulates the array and the core for several parameter
-combinations and checks every result against numpy. Set `TB_SEED` to change
+`make test` builds and simulates the array, the core and the top level for
+several parameter combinations and checks every result against numpy. Set `TB_SEED` to change
 the random seed.

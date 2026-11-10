@@ -3,7 +3,7 @@ RTL := $(wildcard rtl/*.sv)
 .PHONY: lint test clean
 
 lint:
-	verilator --lint-only -Wall --top-module gemm_core $(RTL)
+	verilator --lint-only -Wall --top-module gemm_top $(RTL)
 
 test:
 	python3 -m pytest tb/ -v

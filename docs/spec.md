@@ -6,31 +6,35 @@ Status legend: **[done]** implemented and verified in simulation,
 ## 1. Function
 
 ```
-C[M x N] = A[M x K] * B[K x N] + D[M x N]
+C[M x N] = A[M x K] * B[K x N] + bias[N]
 ```
 
 * A, B: signed integers, `DATA_W` bits (default int8).
-* D: optional signed addend, `ACC_W` bits (bias, or a partial result to keep
-  accumulating into).
-* C: signed, `ACC_W` bits. Optional requantisation (arithmetic right shift,
-  saturation, ReLU) on the way out **[planned]**.
+* bias: optional signed vector, `ACC_W` bits, added to every row of C. This is
+  the fully connected layer of a quantised network: `M` input vectors, `K`
+  inputs, `N` outputs.
+* C: signed, `ACC_W` bits.
+
+`M`, `K` and `N` are run-time values; the array size is a compile-time value.
+Matrices larger than the array are processed tile by tile.
+
+`gemm_core`, the engine underneath, supports a full `M x N` addend D rather
+than a bias vector. The top level only exposes the bias form because a full D
+costs `M x N x ACC_W` bits of memory for little practical use.
 
 The BLAS scalars `alpha` and `beta` are deliberately not supported: they cost
 two extra multipliers per output and quantised inference does not need them.
 
-`M`, `K` and `N` are run-time values. The array size is a compile-time value.
-`gemm_core` handles one tile (`M <= ROWS`, `N <= COLS`) **[done]**; larger
-matrices are processed tile by tile by the layer above it **[planned]**.
-
 ## 2. Architecture
 
 ```
-            +-----------+
- AXI4-Lite -|   CSRs    |---- tile loop                               [planned]
-            +-----------+        |
-                                 v cmd
- AXI4-Stream --> input buffers --> gemm_core --> requant --> AXI4-Stream
-   (A, B, D)        [planned]        [done]     [planned]        (C)
+            +------+        +-----------+
+ s_axis --> | load | -----> | A/B/bias  | ---+
+            +------+        | memories  |    | a, b, d
+                            +-----------+    v
+            +------+   cmd, read addresses +------+  rows  +-----+
+ s_axi  --> | csr  | --start--> | seq | -> | core | -----> | out | --> m_axis
+            +------+                       +------+        +-----+
 ```
 
 Inside `gemm_core`:
@@ -46,16 +50,25 @@ Inside `gemm_core`:
                                +------+     +---------+
 ```
 
-| Module       | Role |
-|--------------|------|
-| `gemm_pe`    | Processing element |
-| `gemm_array` | `ROWS x COLS` mesh of PEs, no skew logic |
-| `gemm_delay` | Fixed delay line used for skew and de-skew |
-| `gemm_fifo`  | Output FIFO |
-| `gemm_ctrl`  | Tile sequencer and output credits |
-| `gemm_core`  | Wires the above together |
+| Module           | Role |
+|------------------|------|
+| `gemm_pe`        | Processing element |
+| `gemm_array`     | `ROWS x COLS` mesh of PEs, no skew logic |
+| `gemm_delay`     | Fixed delay line used for skew and de-skew |
+| `gemm_fifo`      | Output FIFO |
+| `gemm_ctrl`      | Tile sequencer and output credits |
+| `gemm_core`      | One-tile engine: the five modules above |
+| `gemm_mem`       | Operand memory, one word per array edge |
+| `gemm_load`      | Writes the row-major input stream into the memories |
+| `gemm_tile_iter` | Walks the tiles of a matrix |
+| `gemm_seq`       | Feeds commands, operands and bias to the core |
+| `gemm_out`       | Serialises result rows |
+| `gemm_csr`       | AXI4-Lite registers |
+| `gemm_top`       | Top level |
 
-### 2.1 Output-stationary systolic array **[done]**
+All of it is **[done]**.
+
+### 2.1 Output-stationary systolic array
 
 Each PE owns one element of C and accumulates it in place.
 
@@ -72,7 +85,7 @@ larger than one PE is `shift_i`, which feeds the `ROWS` PEs of the west column.
 Why output-stationary: the `K` dimension is unrolled in time, so `K` is not
 limited by the array size. Only `M` and `N` have to be tiled.
 
-### 2.2 Processing element **[done]**
+### 2.2 Processing element
 
 ```
 if (shift)          acc <= c_i;             // drain / preload
@@ -89,7 +102,7 @@ Only control registers (valid, shift) are reset. Operand, product and
 accumulator registers are not: the shift phase that starts every tile
 overwrites the accumulators.
 
-### 2.3 Skew and de-skew **[done]**
+### 2.3 Skew and de-skew
 
 All beats are registered once at the core boundary and then delayed:
 
@@ -105,7 +118,7 @@ All beats are registered once at the core boundary and then delayed:
 Data delay lines have no reset so that FPGA tools can map them onto
 shift-register LUTs. Only the 1-bit valid and tag lines are reset.
 
-### 2.4 Controller **[done]**
+### 2.4 Core controller
 
 The controller knows nothing about skew. It issues two kinds of beats:
 
@@ -138,43 +151,69 @@ too late. The controller keeps a credit counter, initialised to `OUT_DEPTH`,
 decremented when a result row is released and incremented when a row leaves
 the FIFO. The FIFO can never overflow.
 
+### 2.5 Operand memories
+
+The array consumes a column segment of A (`ROWS` elements) and a row segment of
+B (`COLS` elements) in every operand beat. To deliver them in one cycle, each
+memory word holds one such segment:
+
+```
+A[i][k]  ->  a_mem   [(i / ROWS) * K + k],  lane i % ROWS
+B[k][j]  ->  b_mem   [(j / COLS) * K + k],  lane j % COLS
+bias[j]  ->  bias_mem[ j / COLS         ],  lane j % COLS
+```
+
+* Words are written one lane at a time (byte-write-enable style), so the host
+  can send plain row-major data and the loader needs no buffering.
+* For a given tile, both read addresses are `base + k`: they simply count up.
+  Moving to another tile adds `K` to a base register. No multiplier or divider
+  is used anywhere in the address logic.
+* Lanes beyond the matrix edge are never written. They hold stale data, which
+  the core ignores (section 5.1).
+
+Capacity: `ceil(M / ROWS) * K <= A_DEPTH`, `ceil(N / COLS) * K <= B_DEPTH`,
+`ceil(N / COLS) <= BIAS_DEPTH`.
+
+### 2.6 Tiling
+
+Tiles are visited in row-major order: for each band of `ROWS` result rows, for
+each group of `COLS` result columns. The last tile of a band or of a column
+group may be smaller.
+
+The four streams that touch the core (commands, operands, bias, results) each
+own a `gemm_tile_iter` and advance it at their own pace. The command of the
+next tile is therefore offered to the core while the current tile is still
+computing, which is the condition for the drain / preload overlap of 2.4.
+
+The operand stream uses the registered memory output as its holding stage: a
+new word is read whenever that stage is empty or its beat is being accepted,
+which gives one beat per cycle without an extra skid buffer.
+
 ## 3. Parameters
 
-### 3.1 Compile time
-
-| Parameter   | Default | Meaning |
-|-------------|---------|---------|
-| `DATA_W`    | 8       | Operand width, signed |
-| `ROWS`      | 8       | Array rows (tile size in M) |
-| `COLS`      | 8       | Array columns (tile size in N) |
-| `ACC_W`     | 32      | Accumulator width, signed |
-| `PE_PIPE`   | 1       | 1: register between multiplier and adder |
-| `K_MAX`     | 1024    | Largest K per tile, sizes the K counter |
-| `OUT_DEPTH` | `ROWS`  | Output FIFO depth in rows |
+| Parameter    | Default | Meaning |
+|--------------|---------|---------|
+| `DATA_W`     | 8       | Operand width, signed |
+| `ROWS`       | 8       | Array rows (tile size in M) |
+| `COLS`       | 8       | Array columns (tile size in N) |
+| `ACC_W`      | 32      | Accumulator width, signed (at most 32) |
+| `PE_PIPE`    | 1       | 1: register between multiplier and adder |
+| `K_MAX`      | 1024    | Largest K, sizes the K counter |
+| `OUT_DEPTH`  | `ROWS`  | Output FIFO depth in rows |
+| `A_DEPTH`    | 1024    | A memory depth, words of `ROWS` elements |
+| `B_DEPTH`    | 1024    | B memory depth, words of `COLS` elements |
+| `BIAS_DEPTH` | 64      | Bias memory depth, words of `COLS` elements |
+| `DIM_W`      | 16      | Width of the M, K, N registers |
 
 Accumulator sizing: the largest product magnitude is `2^(2*DATA_W-2)`, so `K`
 products fit in `2*DATA_W + ceil(log2(K))` bits. For int8 and `K_MAX = 1024`
-that is 26 bits. The default of 32 leaves headroom for D and matches the int32
-bias convention of quantised networks.
+that is 26 bits. The default of 32 leaves headroom for the bias and matches the
+int32 bias convention of quantised networks.
 
 `OUT_DEPTH` can be any value from 1. With `OUT_DEPTH >= ROWS` a whole tile can
 be drained without waiting for the consumer.
 
-### 3.2 Run time
-
-Per tile, on the `cmd` stream of `gemm_core` **[done]**:
-
-| Field   | Range        | Meaning |
-|---------|--------------|---------|
-| `m`     | 1 .. `ROWS`  | Rows of this tile |
-| `n`     | 1 .. `COLS`  | Columns of this tile |
-| `k`     | 1 .. `K_MAX` | Inner dimension |
-| `has_d` | 0 / 1        | Take `m` rows from the D stream; otherwise start from zero |
-
-Whole-matrix CSRs (`M`, `K`, `N`, `SHIFT`, `RELU_EN`, `CTRL`, `STATUS`)
-**[planned]**.
-
-## 4. Array timing contract **[done]**
+## 4. Array timing contract
 
 `gemm_array` has no skew logic. Whatever drives it must follow this contract;
 in `gemm_core` that is the controller plus the delay lines. Cycle numbers refer
@@ -212,49 +251,96 @@ next shift beat     >= last operand slot + ROWS
 
 The minimum tile period is therefore `K + 2*ROWS - 1` cycles and the array
 utilisation is `K / (K + 2*ROWS - 1)`. Both bounds are exercised at equality by
-the array testbench, and `gemm_core` is checked to reach this period when no
-stream stalls.
+the array testbench; `gemm_core` and `gemm_top` are checked to reach this
+period when nothing stalls.
 
 ## 5. Interfaces
 
-### 5.1 `gemm_core` **[done]**
+### 5.1 `gemm_core`
 
 All streams use valid / ready. Multi-word payloads are packed with element 0
 in the least significant bits.
 
 | Stream | Direction | Beats per tile | Payload |
 |--------|-----------|----------------|---------|
-| `cmd`  | in        | 1              | `m`, `n`, `k`, `has_d` |
+| `cmd`  | in        | 1              | `m`, `n`, `k`, `has_d` (all sizes at least 1) |
 | `d`    | in        | `m` if `has_d` | row of D: `COLS x ACC_W` |
 | `ab`   | in        | `k`            | column of A: `ROWS x DATA_W`; row of B: `COLS x DATA_W` |
 | `c`    | out       | `m`            | row of C: `COLS x ACC_W`; `c_last_o` on row `m - 1` |
 
-* A is consumed column by column and B row by row.
 * B and D columns `>= n` are ignored and C columns `>= n` read as zero. A rows
   `>= m` are ignored: those array rows still compute but are never drained.
 * No ready output depends combinationally on a valid input.
-* `idle_o` is high when no tile is in progress and every result row has left
-  the output FIFO.
 
-### 5.2 Top level **[planned]**
+### 5.2 Top level
 
-* Configuration: AXI4-Lite.
-* Data: AXI4-Stream for A, B, D in and C out.
+| Port group | Protocol | Use |
+|------------|----------|-----|
+| `s_axi`    | AXI4-Lite, 32-bit data | Registers |
+| `s_axis`   | AXI4-Stream, 32-bit `TDATA` | Operand elements, one per beat, in the low bits; `TLAST` not used |
+| `m_axis`   | AXI4-Stream, 32-bit `TDATA` | Result elements, sign-extended, one per beat; `TLAST` on the last one |
+| `irq_o`    | level | Follows `STATUS.DONE` |
+
+One clock (`aclk`), synchronous active-low reset (`aresetn`).
+
+**Registers**
+
+| Offset | Name     | Access | Fields |
+|--------|----------|--------|--------|
+| 0x00   | `CTRL`   | W      | `[0] START` `[1] LOAD_A` `[2] LOAD_B` `[3] LOAD_BIAS`; write 1 to trigger, reads 0 |
+| 0x04   | `STATUS` | R / W1C | `[0] BUSY` `[1] DONE` `[2] LOADING` `[3] ERR` (write 1 to clear `ERR`) |
+| 0x08   | `DIM_M`  | RW     | Rows of A and C |
+| 0x0C   | `DIM_K`  | RW     | Columns of A, rows of B |
+| 0x10   | `DIM_N`  | RW     | Columns of B and C |
+| 0x14   | `CFG`    | RW     | `[0] BIAS_EN` |
+| 0x18   | `CYCLES` | R      | Clock cycles of the last run, `START` to last result element |
+| 0x1C   | `INFO`   | R      | `[7:0] ROWS` `[15:8] COLS` `[23:16] DATA_W` `[31:24] ACC_W` |
+
+* One `CTRL` request per write. A request is accepted only while neither
+  `BUSY` nor `LOADING`, with the dimensions it needs in `1 .. 2^DIM_W - 1` and
+  `K <= K_MAX`. Otherwise it is dropped and `ERR` is set.
+* `DIM_*` and `CFG` are write-protected while `BUSY` or `LOADING`.
+* `DONE` is set together with the last result element and cleared by the next
+  `START`.
+* `ERR` is also set when a load does not fit its memory. The stream is still
+  consumed to the end, the out-of-range writes are dropped.
+
+**Host sequence**
+
+1. Write `DIM_M`, `DIM_K`, `DIM_N`, `CFG`.
+2. Write `LOAD_A`, send `M * K` elements of A in row-major order.
+3. Write `LOAD_B`, send `K * N` elements of B in row-major order.
+4. If `BIAS_EN`: write `LOAD_BIAS`, send `N` elements.
+5. Write `START`, receive `M * N` elements.
+
+Operands stay in the memories. A later run can replace only one of them,
+provided `K` and `N` are unchanged for a kept B, and `K` for a kept A.
+
+**Result order.** Results leave tile by tile (row-major over tiles) and
+row by row inside a tile; only valid elements are sent. For `N <= COLS` this is
+plain row-major order. `tb/gemm_host.py` contains the reference reordering
+(`untile`).
 
 ## 6. Verification
 
-* cocotb testbenches, numpy reference model (`A @ B + D`).
-* `gemm_array` is tested on its own with a testbench-generated edge schedule,
-  so the timing contract is verified independently of the logic that
-  implements it.
-* `gemm_core` is tested through its four streams, each with an independent
-  random stall pattern: random shapes, starved producers, a slow consumer,
-  extreme operand values, FIFO depths from 1 to more than a tile, and a
-  cycle-exact check of the tile period.
+* cocotb testbenches, numpy reference model.
+* Three levels, each with its own testbench:
+  * `gemm_array` with a testbench-generated edge schedule, so the timing
+    contract is verified independently of the logic that implements it;
+  * `gemm_core` through its four streams, each with an independent random
+    stall pattern;
+  * `gemm_top` through AXI, driven by a host model that follows the sequence
+    of section 5.2.
+* Top-level tests: register access and byte strobes, exact and ragged matrix
+  shapes down to 1 x 1 x 1, back-to-back runs with unrelated shapes (stale data
+  in memories and unused lanes), reuse of loaded operands, restart immediately
+  after `TLAST`, stalled streams and delayed register accesses, extreme values,
+  rejected requests, load overflow, and a throughput check on a 16-tile run.
 * Inputs carry random data whenever they are not valid, and operands outside
-  `m x n` are random, so anything the core should ignore is actively wrong.
+  the active region are random or stale, so anything that should be ignored is
+  actively wrong.
 * Array sizes include non-square, single-row and 1 x 1; both `PE_PIPE`
-  settings are covered.
+  settings and output FIFO depths from 1 upwards are covered.
 * Lint: `verilator --lint-only -Wall`.
 
 ## 7. Roadmap
@@ -262,8 +348,10 @@ in the least significant bits.
 1. **[done]** PE and array, verified in simulation.
 2. **[done]** Skew / de-skew lines, controller and output FIFO; run-time
    `m`, `n`, `k` per tile.
-3. **[planned]** Tiling for arbitrary sizes, input buffers, AXI interfaces.
-4. **[planned]** FPGA synthesis and implementation: Fmax, LUT / FF / DSP,
+3. **[done]** Tiling, operand memories, AXI4-Lite and AXI4-Stream interfaces.
+4. **[planned]** FPGA synthesis and implementation: Fmax, LUT / FF / DSP / BRAM,
    throughput, and Fmax versus array size against a non-systolic baseline.
-5. **[planned]** Extensions: weight-stationary mode, overlapping drain with the
+5. **[planned]** Extensions, in no fixed order: output requantisation (shift,
+   saturate, ReLU), row-major result order through a band buffer, several
+   elements per input beat, weight-stationary mode, overlapping drain with the
    next compute phase, operand gating for unused rows, zero skipping.
