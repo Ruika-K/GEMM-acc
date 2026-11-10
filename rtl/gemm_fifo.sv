@@ -33,7 +33,7 @@ module gemm_fifo #(
     assign data_o  = mem[rptr_q];
 
     function automatic logic [AW-1:0] next_ptr(input logic [AW-1:0] ptr);
-        return (ptr == AW'(DEPTH - 1)) ? '0 : ptr + 1'b1;
+        next_ptr = (ptr == AW'(DEPTH - 1)) ? {AW{1'b0}} : ptr + 1'b1;
     endfunction
 
     always_ff @(posedge clk) begin

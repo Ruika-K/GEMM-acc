@@ -30,7 +30,8 @@ module gemm_top #(
     parameter int A_DEPTH    = 1024,   // words of ROWS elements
     parameter int B_DEPTH    = 1024,   // words of COLS elements
     parameter int BIAS_DEPTH = 64,     // words of COLS elements
-    parameter int DIM_W      = 16
+    parameter int DIM_W      = 16,
+    parameter int MEM_SPLIT  = 0       // see gemm_mem: 1 = one RAM per lane
 ) (
     input  logic        aclk,
     input  logic        aresetn,      // synchronous, active low
@@ -179,7 +180,7 @@ module gemm_top #(
         .bias_lane_o (bias_wlane)
     );
 
-    gemm_mem #(.LANES(ROWS), .LANE_W(DATA_W), .DEPTH(A_DEPTH)) u_a_mem (
+    gemm_mem #(.LANES(ROWS), .LANE_W(DATA_W), .DEPTH(A_DEPTH), .SPLIT(MEM_SPLIT)) u_a_mem (
         .clk    (aclk),
         .we_i   (a_we),
         .waddr_i(a_waddr),
@@ -190,7 +191,7 @@ module gemm_top #(
         .rdata_o(a_word)
     );
 
-    gemm_mem #(.LANES(COLS), .LANE_W(DATA_W), .DEPTH(B_DEPTH)) u_b_mem (
+    gemm_mem #(.LANES(COLS), .LANE_W(DATA_W), .DEPTH(B_DEPTH), .SPLIT(MEM_SPLIT)) u_b_mem (
         .clk    (aclk),
         .we_i   (b_we),
         .waddr_i(b_waddr),
@@ -201,7 +202,7 @@ module gemm_top #(
         .rdata_o(b_word)
     );
 
-    gemm_mem #(.LANES(COLS), .LANE_W(ACC_W), .DEPTH(BIAS_DEPTH)) u_bias_mem (
+    gemm_mem #(.LANES(COLS), .LANE_W(ACC_W), .DEPTH(BIAS_DEPTH), .SPLIT(MEM_SPLIT)) u_bias_mem (
         .clk    (aclk),
         .we_i   (bias_we),
         .waddr_i(bias_waddr),

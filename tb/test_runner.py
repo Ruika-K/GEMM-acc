@@ -57,13 +57,23 @@ CORE_CONFIGS = [
 
 
 TOP_CONFIGS = [
-    # rows, cols, pe_pipe, out_depth
-    (4, 4, 1, 4),
-    (8, 8, 1, 8),
-    (3, 5, 0, 3),
-    (5, 3, 1, 2),   # output FIFO smaller than a tile
-    (2, 2, 0, 2),
-    (1, 1, 1, 1),
+    # rows, cols, pe_pipe, out_depth, mem_split
+    (4, 4, 1, 4, 0),
+    (8, 8, 1, 8, 0),
+    (3, 5, 0, 3, 0),
+    (5, 3, 1, 2, 0),   # output FIFO smaller than a tile
+    (2, 2, 0, 2, 0),
+    (1, 1, 1, 1, 0),
+    (4, 4, 1, 4, 1),   # one RAM per lane
+    (3, 5, 0, 3, 1),
+]
+
+
+BCAST_CONFIGS = [
+    # rows, cols, pe_pipe
+    (4, 4, 1),
+    (3, 5, 0),
+    (1, 1, 1),
 ]
 
 
@@ -107,11 +117,22 @@ def test_gemm_core(rows, cols, pipe, depth):
     )
 
 
-@pytest.mark.parametrize("rows,cols,pipe,depth", TOP_CONFIGS)
-def test_gemm_top(rows, cols, pipe, depth):
+@pytest.mark.parametrize("rows,cols,pipe,depth,split", TOP_CONFIGS)
+def test_gemm_top(rows, cols, pipe, depth, split):
     simulate(
         "gemm_top",
         TOP_SOURCES,
         "test_gemm_top",
-        {"ROWS": rows, "COLS": cols, "PE_PIPE": pipe, "OUT_DEPTH": depth},
+        {"ROWS": rows, "COLS": cols, "PE_PIPE": pipe, "OUT_DEPTH": depth, "MEM_SPLIT": split},
+    )
+
+
+@pytest.mark.parametrize("rows,cols,pipe", BCAST_CONFIGS)
+def test_gemm_array_bcast(rows, cols, pipe):
+    """Baseline used only for the synthesis comparison."""
+    simulate(
+        "gemm_array_bcast",
+        [ROOT / "syn" / "common" / "gemm_array_bcast.sv"],
+        "test_gemm_array_bcast",
+        {"ROWS": rows, "COLS": cols, "PE_PIPE": pipe},
     )
