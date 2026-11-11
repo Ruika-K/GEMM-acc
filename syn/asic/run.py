@@ -62,7 +62,8 @@ RTL = [ROOT / "rtl" / f for f in (
     "gemm_pe.sv", "gemm_array.sv", "gemm_delay.sv", "gemm_fifo.sv", "gemm_ctrl.sv",
     "gemm_core.sv", "gemm_tile_iter.sv", "gemm_load.sv", "gemm_seq.sv", "gemm_out.sv",
     "gemm_csr.sv", "gemm_top.sv")]
-BCAST = ROOT / "syn" / "common" / "gemm_array_bcast.sv"
+BCAST = [ROOT / "syn" / "common" / "gemm_pe_bcast.sv",
+         ROOT / "syn" / "common" / "gemm_array_bcast.sv"]
 MEM_BB = HERE / "gemm_mem_blackbox.sv"
 
 FIELDS = ["job", "top", "params", "period_ns", "area_um2", "kge", "cells", "flops",
@@ -78,7 +79,7 @@ def jobs():
     for n in (4, 8, 16):
         out[f"sys_{n}"] = dict(top="gemm_array", sources=RTL[:2],
                                params={"ROWS": n, "COLS": n}, period=5.0)
-        out[f"bcast_{n}"] = dict(top="gemm_array_bcast", sources=[BCAST],
+        out[f"bcast_{n}"] = dict(top="gemm_array_bcast", sources=BCAST,
                                  params={"ROWS": n, "COLS": n}, period=5.0)
     # The same 8 x 8 arrays with a ripple-carry accumulator adder, to show what
     # the adder architecture is worth.

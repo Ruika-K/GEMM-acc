@@ -1,2 +1,4 @@
 job,top,util_target,die_um2,cell_um2,util_pct,period_ns,fmax_tt_mhz,fmax_ss_mhz,fmax_ff_mhz,hold_slack_ns,skew_ns,drc,wire_um,runtime_s
-pe,gemm_pe,50,14656,7973,68,5.0,165,87,258,0.311,-0.01,0,,66
+pe,gemm_pe,50,14656,8044,69,5.0,163,87,256,0.308,-0.01,0,20706,69
+sys_4,gemm_array,50,203383,124369,65,5.0,165,87,258,0.029,-0.03,0,304780,366
+bcast_4,gemm_array_bcast,50,189234,114601,65,5.0,146,77,232,0.058,-0.06,0,359064,499

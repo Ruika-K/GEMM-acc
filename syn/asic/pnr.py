@@ -11,7 +11,9 @@ placement, clock tree, timing repair, global and detailed routing, parasitic
 extraction, and timing at three corners with the extracted wires.
 
 Results are written to syn/asic/pnr_results.csv, logs and layouts (DEF, ODB)
-to syn/build/asic/<job>/pnr/. Frequencies are for the worst
+to syn/build/asic/<job>/pnr/. The "routing" column says how far a job went:
+"detailed" jobs are fully routed and timed with extracted parasitics, "global"
+jobs stop after global routing and are timed with its wire estimates. Frequencies are for the worst
 register-to-register path; hold slack is the worst over all paths.
 
 Needs openroad on PATH and the sky130A PDK (PDK_ROOT, default ~/pdk/sky130).
@@ -43,7 +45,7 @@ PE_PINS = ("a_i[*] left:* a_valid_i left:* shift_i left:* "
            "b_i[*] top:* c_o[*] top:* b_o[*] bottom:* c_i[*] bottom:*")
 BCAST_PINS = ARRAY_PINS.replace("a_valid_i[*]", "a_valid_i").replace("c_valid_o[*]", "c_valid_o")
 
-FIELDS = ["job", "top", "util_target", "die_um2", "cell_um2", "util_pct", "period_ns",
+FIELDS = ["job", "top", "routing", "util_target", "die_um2", "cell_um2", "util_pct", "period_ns",
           "fmax_tt_mhz", "fmax_ss_mhz", "fmax_ff_mhz", "hold_slack_ns", "skew_ns",
           "drc", "wire_um", "runtime_s"]
 
@@ -54,6 +56,10 @@ def jobs():
     for n in (4, 8):
         out[f"sys_{n}"] = dict(top="gemm_array", util=50, pins=ARRAY_PINS)
         out[f"bcast_{n}"] = dict(top="gemm_array_bcast", util=50, pins=BCAST_PINS)
+    # 16 x 16 is about 160 000 cells. Detailed routing would take hours, so
+    # these two stop after global routing and use its wire estimates.
+    out["sys_16"] = dict(top="gemm_array", util=50, pins=ARRAY_PINS, droute=False)
+    out["bcast_16"] = dict(top="gemm_array_bcast", util=50, pins=BCAST_PINS, droute=False)
     return out
 
 
@@ -76,7 +82,8 @@ def run(name, job):
     env = dict(os.environ, PDK_ROOT=PDK_ROOT, PNR_TOP=job["top"],
                PNR_NETLIST=str(src / "netlist.v"), PNR_SDC=str(src / "constraints.sdc"),
                PNR_OUT=str(work), PNR_UTIL=str(job["util"]),
-               PNR_DENSITY=str(job.get("density", 0.6)), PNR_DROUTE="1", PNR_PINS=job["pins"])
+               PNR_DENSITY=str(job.get("density", 0.6)),
+               PNR_DROUTE="1" if job.get("droute", True) else "0", PNR_PINS=job["pins"])
     t0 = time.time()
     with open(work / "pnr.log", "w") as f:
         subprocess.run(["openroad", "-no_init", "-exit", "-threads", "4", str(HERE / "pnr.tcl")],
@@ -94,9 +101,11 @@ def run(name, job):
     die_um2 = (int(die.group(3)) - int(die.group(1))) * (int(die.group(4)) - int(die.group(2))) / 1e6
     skew = re.search(r"^\s*(-?[0-9.]+)\s+setup skew", section(log, "clock skew"), flags=re.M)
     wire = re.findall(r"Total wire length = (\d+) um", log)
-    drc = (work / "drc.rpt").read_text().count("violation type:")
+    routed = job.get("droute", True)
+    drc = (work / "drc.rpt").read_text().count("violation type:") if routed else ""
     return dict(
-        job=name, top=job["top"], util_target=job["util"],
+        job=name, top=job["top"], routing="detailed" if routed else "global",
+        util_target=job["util"],
         die_um2=f"{die_um2:.0f}",
         cell_um2=f"{float(area.group(1)):.0f}", util_pct=area.group(2),
         period_ns=period,
