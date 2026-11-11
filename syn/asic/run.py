@@ -127,7 +127,6 @@ def synth(name, job, work):
         abc -liberty {lib} {dont_use()} -constr {work / 'abc.constr'} -D {period_ps}
         hilomap -hicell sky130_fd_sc_hd__conb_1 HI -locell sky130_fd_sc_hd__conb_1 LO
         opt_clean -purge
-        autoname
         tee -o {work / 'stat.txt'} stat -liberty {lib} -top {job['top']}
         write_verilog -noattr -noexpr -nohex -nodec {work / 'netlist_yosys.v'}
     """

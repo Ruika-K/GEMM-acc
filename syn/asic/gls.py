@@ -2,7 +2,13 @@
 """Gate-level simulation: run the array testbench on a synthesised netlist.
 
     python3 syn/asic/run.py sys_4
-    python3 syn/asic/gls.py sys_4
+    python3 syn/asic/gls.py sys_4          # netlist after synthesis
+    python3 syn/asic/pnr.py sys_4
+    python3 syn/asic/gls.py sys_4 --pnr    # netlist after place and route
+
+With --pnr the netlist written after place and route is used: it additionally
+contains the clock tree, the buffers inserted for timing and hold repair, and
+every cell that was resized on the way.
 
 The netlist of syn/build/asic/<job>/ is simulated with the functional Verilog
 models of the sky130 standard cells and driven by tb/test_gemm_array.py, the
@@ -74,15 +80,20 @@ endmodule
 
 
 def main():
-    job = sys.argv[1] if len(sys.argv) > 1 else "sys_4"
+    args = [a for a in sys.argv[1:] if a != "--pnr"]
+    post_layout = "--pnr" in sys.argv[1:]
+    job = args[0] if args else "sys_4"
     m = re.fullmatch(r"sys_(\d+)(_nopipe)?(_ripple)?", job)
     if not m:
         sys.exit("only sys_N jobs are supported")
     netlist = ROOT / "syn" / "build" / "asic" / job / "netlist.v"
+    if post_layout:
+        netlist = netlist.parent / "pnr" / "gemm_array.pnr.v"
     if not netlist.exists():
-        sys.exit(f"{netlist} not found: run syn/asic/run.py {job} first")
+        step = "pnr.py" if post_layout else "run.py"
+        sys.exit(f"{netlist} not found: run syn/asic/{step} {job} first")
 
-    build = ROOT / "sim_build" / f"gls_{job}"
+    build = ROOT / "sim_build" / f"gls_{job}{'_pnr' if post_layout else ''}"
     build.mkdir(parents=True, exist_ok=True)
     wrapper = build / "gemm_array_gls.v"
     wrapper.write_text(WRAPPER.format(n=m.group(1), pipe=0 if m.group(2) else 1))

@@ -1,6 +1,6 @@
 RTL := $(wildcard rtl/*.sv)
 
-.PHONY: lint test syn-ecp5 syn-asic clean clean-syn
+.PHONY: lint test syn-ecp5 syn-asic pnr-asic clean clean-syn
 
 lint:
 	verilator --lint-only -Wall --top-module gemm_top $(RTL)
@@ -13,6 +13,9 @@ syn-ecp5:
 
 syn-asic:
 	python3 syn/asic/run.py
+
+pnr-asic:
+	python3 syn/asic/pnr.py
 
 clean:
 	rm -rf sim_build tb/__pycache__ .pytest_cache tb/*.xml

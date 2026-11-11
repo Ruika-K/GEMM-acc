@@ -2,7 +2,7 @@
 
 An ASIC flow (standard cells, SkyWater sky130) and two FPGA flows.
 
-## ASIC: sky130 logic synthesis and pre-layout timing
+## ASIC: sky130 synthesis, place and route
 
 `asic/run.py` maps the design to `sky130_fd_sc_hd` standard cells with Yosys
 and analyses timing with OpenSTA at the typical (tt, 25 C, 1.80 V) and the slow
@@ -44,6 +44,20 @@ sky130 cell models:
 ```bash
 python3 syn/asic/gls.py sys_8
 ```
+
+Place and route with OpenROAD, on the netlists the synthesis step left behind:
+
+```bash
+python3 syn/asic/pnr.py pe sys_4 bcast_4
+```
+
+`asic/pnr.tcl` is the flow itself: floorplan, power grid, placement, clock
+tree synthesis, setup and hold repair, global and detailed routing, parasitic
+extraction, then timing at the typical, slow and fast corner with the extracted
+wires. Pins are placed on the side their data flows through (A on the west
+edge, B on the north edge, the accumulator chain south to north). Results go to
+`syn/asic/pnr_results.csv`, the layout (DEF, ODB), the SPEF and the log to
+`syn/build/asic/<job>/pnr/`.
 
 ## FPGA
 
