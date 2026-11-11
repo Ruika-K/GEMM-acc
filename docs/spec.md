@@ -349,10 +349,11 @@ plain row-major order. `tb/gemm_host.py` contains the reference reordering
 2. **[done]** Skew / de-skew lines, controller and output FIFO; run-time
    `m`, `n`, `k` per tile.
 3. **[done]** Tiling, operand memories, AXI4-Lite and AXI4-Stream interfaces.
-4. **[in progress]** FPGA synthesis and implementation: Fmax, LUT / FF / DSP /
-   BRAM, throughput, and Fmax versus array size against a non-systolic
-   baseline. ECP5 results are in [results.md](results.md); the Vivado sweep is
-   still to be run.
+4. **[in progress]** Implementation, results in [results.md](results.md).
+   * ASIC, sky130: logic synthesis, pre-layout timing and gate-level
+     simulation are done; SRAM macros, place and route, power and clock gating
+     are not.
+   * FPGA prototype: ECP5 done; the Vivado sweep is still to be run.
 5. **[planned]** Extensions, in no fixed order: output requantisation (shift,
    saturate, ReLU), row-major result order through a band buffer, several
    elements per input beat, weight-stationary mode, overlapping drain with the

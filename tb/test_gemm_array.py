@@ -12,7 +12,7 @@ import random
 import cocotb
 import numpy as np
 from cocotb.clock import Clock
-from cocotb.triggers import ReadOnly, RisingEdge
+from cocotb.triggers import ReadOnly, RisingEdge, Timer
 
 from util import pack, random_matrix, to_signed
 
@@ -104,6 +104,8 @@ async def play(dut, p, sched, rng):
         dut.c_i.value = pack(c_vals, p.acc_w)
         dut.shift_i.value = 1 if cyc in sched.shift else 0
 
+        if SETTLE_PS:
+            await Timer(SETTLE_PS, "ps")
         await ReadOnly()
         c_valid = int(dut.c_valid_o.value)
         if c_valid:
@@ -185,6 +187,9 @@ def make_tiles(p, rng, k_list, mode="random", zero_d=False):
 
 
 SEED = int(os.environ.get("TB_SEED", "1"))
+# Gate-level runs delay the inputs after the clock edge (see syn/asic/gls.py);
+# outputs that depend combinationally on an input are sampled after that delay.
+SETTLE_PS = int(os.environ.get("TB_SETTLE_PS", "0"))
 
 
 @cocotb.test()

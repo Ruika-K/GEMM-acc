@@ -12,9 +12,13 @@ C[M x N] = A[M x K] * B[K x N] + bias[N]
 Work in progress. The RTL is functionally complete and verified in simulation:
 `gemm_top` takes matrices of run-time size over AXI4-Stream, stores them in
 on-chip memories, tiles them over the array and streams the result back, with
-AXI4-Lite registers for control. First implementation results, from an
-open-source flow on a Lattice ECP5, are in [docs/results.md](docs/results.md);
-Xilinx results are still to come.
+AXI4-Lite registers for control.
+
+Implementation results are in [docs/results.md](docs/results.md): standard-cell
+synthesis on SkyWater sky130 with pre-layout timing and gate-level simulation
+(156 kGE and 80 MHz at the slow corner for an 8 x 8 array, memories excluded),
+and an FPGA prototype on a Lattice ECP5. Place and route for the ASIC flow has
+not been done yet.
 
 ## Design in brief
 

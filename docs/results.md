@@ -1,13 +1,131 @@
 # Implementation results
 
-Status: the open-source flow (Yosys + nextpnr, Lattice ECP5) has been run. The
-Vivado flow (`syn/vivado/run.tcl`) has only passed a three-job smoke test so
-far; Xilinx numbers will be added after the full sweep.
+Two kinds of results: ASIC logic synthesis on an open 130 nm process, which
+is the main target, and an FPGA implementation used as a prototype.
 
-All numbers below come from `syn/ecp5/run.py` and are stored in
+| Flow | State |
+|------|-------|
+| ASIC, sky130, synthesis and pre-layout timing | done |
+| ASIC, place and route | not started |
+| FPGA, Lattice ECP5 (Yosys + nextpnr) | done |
+| FPGA, Xilinx (Vivado) | three-job smoke test passed, full sweep pending |
+
+# ASIC: SkyWater sky130
+
+Flow: `syn/asic/run.py`, numbers in `syn/asic/results.csv`. Yosys maps the RTL
+to the `sky130_fd_sc_hd` standard-cell library, OpenSTA analyses timing.
+
+* Corners: typical (tt, 25 C, 1.80 V) and slow (ss, 100 C, 1.60 V).
+* Frequencies are for the worst register-to-register path at a 5 ns
+  constraint.
+* **These are pre-layout numbers.** No wire delay, no clock tree, no hold
+  fixing. Area will grow and frequency will drop after place and route.
+* The operand memories are SRAM macros in an ASIC. They are black boxes here
+  and not part of any area figure.
+* 1 gate equivalent (GE) = one `nand2_1` = 3.75 um2.
+
+## Complete accelerator, 8 x 8 array
+
+`gemm_top` without the memories: **156 kGE** (584 000 um2 of cells), 9739
+flip-flops, **169 MHz typical, 80 MHz slow corner**.
+
+Peak throughput is 64 multiply-accumulates per cycle: 5.1 GMAC/s at the slow
+corner, 10.8 GMAC/s at the typical one.
+
+Where the area goes (cells of each module type, not counting its submodules):
+
+| Module | Instances | Area (um2) | Share |
+|--------|----------:|-----------:|------:|
+| `gemm_pe` | 64 | 388 480 | 66.5 % |
+| `gemm_fifo` (output FIFO) | 1 | 92 200 | 15.8 % |
+| `gemm_delay` (skew and de-skew) | 41 | 54 500 | 9.3 % |
+| `gemm_core` (input register, glue) | 1 | 14 900 | 2.6 % |
+| `gemm_tile_iter` | 4 | 8 800 | 1.5 % |
+| `gemm_load` | 1 | 7 226 | 1.2 % |
+| `gemm_csr` | 1 | 7 080 | 1.2 % |
+| `gemm_seq` | 1 | 4 514 | 0.8 % |
+| `gemm_ctrl` | 1 | 4 070 | 0.7 % |
+| `gemm_out` | 1 | 2 410 | 0.4 % |
+
+Two things stand out:
+
+* **The output FIFO is 16 % of the logic.** It holds 8 rows of 257 bits in
+  flip-flops. `OUT_DEPTH` is a parameter and the design is correct for any
+  depth from 1, so this is a direct area / throughput trade.
+* **The skew and de-skew lines are 9 %.** They are 2540 flip-flops, more than
+  half as many as the array has, but the array's area is dominated by its
+  multipliers and adders.
+
+Memories that would be SRAM macros: A and B are 1024 x 64 bit each, bias is
+64 x 256 bit.
+
+## One processing element
+
+| `PE_PIPE` | Area | Flip-flops |
+|-----------|------|-----------:|
+| 1 | 6052 um2 = 1.6 kGE | 66 |
+| 0 | 6010 um2 = 1.6 kGE | 50 |
+
+About a quarter of a PE is flip-flops; the rest is the 8 x 8 Booth multiplier,
+the 32-bit accumulator adder and the load multiplexer.
+
+## Array size, pipelining and adder architecture
+
+| Design | Area (kGE) | Flip-flops | Fmax typical (MHz) | Fmax slow (MHz) |
+|--------|-----------:|-----------:|-------------------:|----------------:|
+| systolic 4 x 4 | 25.8 | 1056 | 160 | 80 |
+| systolic 8 x 8 | 103.8 | 4224 | 165 | 80 |
+| systolic 16 x 16 | 415.2 | 16 896 | 167 | 83 |
+| broadcast 4 x 4 | 23.9 | 836 | 142 | 72 |
+| broadcast 8 x 8 | 96.3 | 3204 | 140 | 71 |
+| broadcast 16 x 16 | 381.8 | 12 548 | 135 | 69 |
+| systolic 8 x 8, `PE_PIPE = 0` | 102.6 | 3200 | 136 | 69 |
+| systolic 8 x 8, ripple-carry adder | 103.7 | 4224 | 154 | 80 |
+| `gemm_core` 8 x 8 | 148.0 | 9299 | 168 | 83 |
+
+* **The accumulate stage is the critical path**, not the multiplier: product
+  register -> 32-bit adder -> load multiplexer -> accumulator. The default flow
+  therefore maps carry chains to a Sklansky prefix adder, which is 7 % faster
+  than ripple carry at the typical corner for no measurable area. At the slow
+  corner the two are equal; that has not been analysed further.
+* **The product register is worth 21 %** at the typical corner (136 -> 165 MHz)
+  and 16 % at the slow one, for 1 % more area.
+* **Systolic against broadcast, with a caveat.** The systolic array keeps its
+  frequency from 4 x 4 to 16 x 16 and is 13 - 24 % faster than the baseline,
+  which loses a little with every size step. The baseline is 7 - 8 % smaller.
+  But the two are not mapped the same way: the systolic array is synthesised
+  one PE at a time, the baseline as one flat module, and mapping the systolic
+  array flat moved its result by as much as the gap between the two. Without
+  wire delay this comparison cannot be settled; it needs place and route.
+
+## Gate-level simulation
+
+`syn/asic/gls.py` runs the array testbench (`tb/test_gemm_array.py`, the one
+that checks the RTL) on the synthesised netlists with the functional sky130
+cell models. Passing: 4 x 4, 8 x 8, 8 x 8 without product register, 8 x 8 with
+ripple-carry adder.
+
+Two things had to be handled that RTL simulation hides: inputs that change on
+the clock edge race the clock in a zero-delay netlist, so the netlist is
+wrapped and its inputs delayed by 100 ps; and with `PE_PIPE = 0` the array has
+a combinational path from `shift_i` to `c_valid_o[0]`, so outputs are sampled
+after that delay.
+
+## Not done yet
+
+* SRAM macros for the operand memories, and timing of the paths through them.
+* Place and route (OpenROAD): wire delay, clock tree, hold, real area.
+* Power: OpenSTA's default switching activity is not meaningful for a design
+  that idles most of its control logic; it needs activity from simulation.
+* Clock gating. Most registers have an enable.
+
+# FPGA prototype: Lattice ECP5
+
+All numbers in this part come from `syn/ecp5/run.py` and are stored in
 `syn/ecp5/results.csv`. Device: LFE5UM-85F, speed grade 8, package CABGA756.
 Every job is placed and routed with three seeds; frequencies are given as
-worst - best seed.
+worst - best seed. The Vivado flow (`syn/vivado/run.tcl`) has only passed a
+three-job smoke test so far; Xilinx numbers will be added after the full sweep.
 
 ## Complete accelerator, 8 x 8 array
 
