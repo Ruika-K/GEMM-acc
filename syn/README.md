@@ -8,6 +8,7 @@ Two flows that implement the same jobs.
 | `bcast_N`  | `N x N` broadcast baseline (`common/gemm_array_bcast.sv`) inside the same harness |
 | `*_nopipe` | the same with `PE_PIPE = 0` |
 | `*_lut`    | the same with multipliers built from LUTs (ECP5 flow only) |
+| `*_dsp`    | the same with DSP blocks forced by `GEMM_USE_DSP` (Vivado flow only) |
 | `top_8`    | the complete accelerator with an 8 x 8 array |
 
 `common/syn_array_harness.sv` feeds all array inputs from a serial shift
@@ -22,15 +23,22 @@ PE. It is checked against numpy by `tb/test_gemm_array_bcast.py`.
 
 ## Vivado
 
-Status: not run yet. The script has only been dry-run with stubbed commands.
+Status: the `quick` mode has been run with Vivado 2023.2 (three jobs, no
+errors). The script was changed afterwards (clock constraints, utilisation
+taken from the report, job list); the `standard` sweep has not been run yet.
+
+Vivado builds the 8 x 8 bit multipliers from LUTs by default, so the jobs are
+not limited by the number of DSP blocks. The `_dsp` jobs define `GEMM_USE_DSP`,
+which puts `(* use_dsp = "yes" *)` on the PE; that costs two DSP blocks per PE.
 
 ```bash
 vivado -mode batch -source syn/vivado/run.tcl
 ```
 
 Optional arguments after `-tclargs`: mode (`quick`, `standard`, `full`), part
-(default `xc7z020clg400-1`), clock period in ns (default `3.0`). For example a
-three-job smoke test:
+(default `xc7z020clg400-1`), clock period in ns for the LUT-multiplier jobs
+(default `6.0`) and for the DSP jobs (default `3.5`). For example a three-job
+smoke test:
 
 ```bash
 vivado -mode batch -source syn/vivado/run.tcl -tclargs quick

@@ -17,7 +17,13 @@
 // Only control registers are reset. Datapath registers (a, b, product,
 // accumulator) are initialised by the protocol: every tile starts with a
 // shift phase that overwrites the accumulators.
+//
+// The multiplier is left to the synthesis tool. Vivado builds an 8 x 8 bit
+// multiplier from LUTs by default; define GEMM_USE_DSP to force DSP blocks.
 // -----------------------------------------------------------------------------
+`ifdef GEMM_USE_DSP
+(* use_dsp = "yes" *)
+`endif
 module gemm_pe #(
     parameter int DATA_W  = 8,   // operand width (signed)
     parameter int ACC_W   = 32,  // accumulator width (signed)

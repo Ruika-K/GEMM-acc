@@ -12,6 +12,9 @@
 // There is no skew: all PEs accumulate in the same cycle and all columns
 // shift in the same cycle. The cost is fan-out that grows with the array.
 // -----------------------------------------------------------------------------
+`ifdef GEMM_USE_DSP
+(* use_dsp = "yes" *)
+`endif
 module gemm_array_bcast #(
     parameter int DATA_W  = 8,
     parameter int ACC_W   = 32,

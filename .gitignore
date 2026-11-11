@@ -6,3 +6,12 @@ results.xml
 *.fst
 *.result.xml
 syn/build/
+
+# Vivado leftovers
+/clockInfo.txt
+/tight_setup_hold_pins.txt
+vivado*.jou
+vivado*.log
+vivado*.str
+.Xil/
+syn/vivado/results.prev.csv

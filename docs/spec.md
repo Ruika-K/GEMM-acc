@@ -351,8 +351,8 @@ plain row-major order. `tb/gemm_host.py` contains the reference reordering
 3. **[done]** Tiling, operand memories, AXI4-Lite and AXI4-Stream interfaces.
 4. **[in progress]** FPGA synthesis and implementation: Fmax, LUT / FF / DSP /
    BRAM, throughput, and Fmax versus array size against a non-systolic
-   baseline. ECP5 results are in [results.md](results.md); the Vivado flow has
-   not been run yet.
+   baseline. ECP5 results are in [results.md](results.md); the Vivado sweep is
+   still to be run.
 5. **[planned]** Extensions, in no fixed order: output requantisation (shift,
    saturate, ReLU), row-major result order through a band buffer, several
    elements per input beat, weight-stationary mode, overlapping drain with the

@@ -1,8 +1,8 @@
 # Implementation results
 
 Status: the open-source flow (Yosys + nextpnr, Lattice ECP5) has been run. The
-Vivado flow (`syn/vivado/run.tcl`) has not been run yet, so there are no Xilinx
-numbers here.
+Vivado flow (`syn/vivado/run.tcl`) has only passed a three-job smoke test so
+far; Xilinx numbers will be added after the full sweep.
 
 All numbers below come from `syn/ecp5/run.py` and are stored in
 `syn/ecp5/results.csv`. Device: LFE5UM-85F, speed grade 8, package CABGA756.
