@@ -1,6 +1,10 @@
-job,top,util_target,die_um2,cell_um2,util_pct,period_ns,fmax_tt_mhz,fmax_ss_mhz,fmax_ff_mhz,hold_slack_ns,skew_ns,drc,wire_um,runtime_s
-pe,gemm_pe,50,14656,8044,69,5.0,163,87,256,0.308,-0.01,0,20706,69
-sys_4,gemm_array,50,203383,124369,65,5.0,165,87,258,0.029,-0.03,0,304780,366
-bcast_4,gemm_array_bcast,50,189234,114601,65,5.0,146,77,232,0.058,-0.06,0,359064,499
-sys_8,gemm_array,50,798592,501744,65,5.0,169,88,265,0.013,0.03,0,1228510,1797
-bcast_8,gemm_array_bcast,50,769664,469435,63,5.0,154,81,243,0.018,0.07,0,1272796,1381
+job,top,placement,routing,util_target,die_um2,cell_um2,util_pct,period_ns,fmax_tt_mhz,fmax_ss_mhz,fmax_ff_mhz,crit_path_bufs,buf_chain,hold_slack_ns,skew_ns,drc,wire_um,runtime_s
+pe,gemm_pe,timing,detailed,50,14886,7372,63,10.0,172,90,275,0,1,0.381,0.01,0,19670,72
+sys_4,gemm_array,timing,detailed,50,206952,113499,58,10.0,173,91,276,0,2,0.212,0.03,0,289804,920
+bcast_4,gemm_array_bcast,timing,detailed,50,196710,106791,57,10.0,172,91,274,2,1,0.274,0.03,0,294149,1026
+sys_8,gemm_array,timing,detailed,50,807841,448295,57,10.0,171,90,274,0,1,0.214,0.04,0,1149965,2822
+bcast_8,gemm_array_bcast,timing,detailed,50,761073,422755,57,10.0,171,90,274,0,2,0.272,0.06,0,1215617,2984
+sys_8_est,gemm_array,wire length,global,50,807841,431448,55,10.0,158,84,250,0,1,0.226,-0.05,,,159
+bcast_8_est,gemm_array_bcast,wire length,global,50,761073,412792,56,10.0,158,84,250,0,1,0.310,-0.06,,,314
+sys_16_est,gemm_array,wire length,global,50,3191779,1718625,55,10.0,157,83,249,0,2,0.027,0.06,,,498
+bcast_16_est,gemm_array_bcast,wire length,global,50,2994146,1601000,54,10.0,157,82,246,2,3,0.018,0.09,,,663

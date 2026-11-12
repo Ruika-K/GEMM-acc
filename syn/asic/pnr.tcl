@@ -10,6 +10,8 @@
 #   PNR_DENSITY   global placement density (0..1)
 #   PNR_DROUTE    1: detailed route and extract parasitics, 0: stop after
 #                 global route and use its wire estimates
+#   PNR_TIMING_PLACE  1: timing-driven global placement, 0: wire-length-driven
+#                 only (much faster on large blocks; timing repair still runs)
 #   PNR_PINS      optional list of "pin-name-pattern region" pairs, e.g.
 #                 {a_i[*] left:* b_i[*] top:*}; other pins go anywhere
 #   PDK_ROOT      directory that contains sky130A
@@ -23,12 +25,17 @@ set out     $::env(PNR_OUT)
 set util    $::env(PNR_UTIL)
 set density $::env(PNR_DENSITY)
 set droute  $::env(PNR_DROUTE)
+set timing_place $::env(PNR_TIMING_PLACE)
 
 set pdk  [file join $::env(PDK_ROOT) sky130A]
 set ref  [file join $pdk libs.ref sky130_fd_sc_hd]
 set tech [file join $pdk libs.tech openlane]
 
-proc stage {name} { puts "\n######## $name ########" }
+set t0 [clock seconds]
+proc stage {name} {
+    puts "\n######## $name (t = [expr {[clock seconds] - $::t0}] s) ########"
+    flush stdout
+}
 
 # ------------------------------------------------------------------------------
 stage "read design"
@@ -113,7 +120,11 @@ stage "placement"
 set_wire_rc -signal -layer met2
 set_wire_rc -clock  -layer met5
 
-global_placement -density $density -timing_driven
+if {$timing_place} {
+    global_placement -density $density -timing_driven
+} else {
+    global_placement -density $density
+}
 estimate_parasitics -placement
 repair_design
 detailed_placement
@@ -131,7 +142,13 @@ detailed_placement
 stage "timing repair"
 # ------------------------------------------------------------------------------
 estimate_parasitics -placement
-repair_timing -setup
+# Setup repair by resizing, pin swapping and cloning only. With buffer insertion
+# enabled, this step (OpenROAD 26Q3) leaves chains of up to 50 single-fanout
+# buffers on paths it cannot close; they look harmless with placement-based
+# wire estimates and become the critical path once routed. Buffering of long
+# and high-fanout nets has already been done by the timing-driven placement
+# and by repair_design.
+repair_timing -setup -skip_buffering
 repair_timing -hold
 detailed_placement
 check_placement
@@ -174,6 +191,7 @@ report_clock_skew
 puts "SECTION power"
 report_power -corner tt
 puts "SECTION end"
+puts "elapsed [expr {[clock seconds] - $t0}] s"
 
 write_def     [file join $out $top.def]
 write_db      [file join $out $top.odb]

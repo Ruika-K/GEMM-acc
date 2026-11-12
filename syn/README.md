@@ -10,6 +10,7 @@ and analyses timing with OpenSTA at the typical (tt, 25 C, 1.80 V) and the slow
 
 | Job | What is built |
 |-----|---------------|
+| `mac`, `mac_nopipe`, `mac_ripple` | the multiply-accumulate datapath of a PE (`gemm_mac`) |
 | `pe`, `pe_nopipe` | one processing element |
 | `sys_N` | `N x N` systolic array |
 | `bcast_N` | `N x N` broadcast baseline |
@@ -33,8 +34,13 @@ unpacked so that `$PDK_ROOT/sky130A/libs.ref/sky130_fd_sc_hd/lib` exists.
 python3 syn/asic/run.py
 ```
 
+Synthesis is bottom-up for `gemm_mac`: it is mapped once per variant and that
+netlist is placed into every design that contains it, so that all arrays,
+systolic and broadcast, are built from the same gates.
+
 Results go to `syn/asic/results.csv`; netlists, timing reports and an area
-breakdown per module (`breakdown.txt`) to `syn/build/asic/<job>/`. These are pre-layout numbers: no wires, no clock tree.
+breakdown per module (`breakdown.txt`) to `syn/build/asic/<job>/`. These are
+pre-layout numbers: no wires, no clock tree.
 The operand memories are SRAM macros in an ASIC and are left out as black
 boxes (`asic/gemm_mem_blackbox.sv`).
 
@@ -49,6 +55,7 @@ Place and route with OpenROAD, on the netlists the synthesis step left behind:
 
 ```bash
 python3 syn/asic/pnr.py pe sys_4 bcast_4
+python3 syn/asic/pnr.py --parse sys_4      # re-read the log of an earlier run
 ```
 
 `asic/pnr.tcl` is the flow itself: floorplan, power grid, placement, clock
@@ -57,7 +64,37 @@ extraction, then timing at the typical, slow and fast corner with the extracted
 wires. Pins are placed on the side their data flows through (A on the west
 edge, B on the north edge, the accumulator chain south to north). Results go to
 `syn/asic/pnr_results.csv`, the layout (DEF, ODB), the SPEF and the log to
-`syn/build/asic/<job>/pnr/`.
+`syn/build/asic/<design>/pnr/` (`pnr_est/` for the reduced flow).
+
+| Job | Flow |
+|-----|------|
+| `pe`, `sys_4`, `bcast_4`, `sys_8`, `bcast_8` | full: timing-driven placement, detailed routing, extracted parasitics |
+| `sys_8_est`, `bcast_8_est`, `sys_16_est`, `bcast_16_est` | reduced: placement for wire length, global routing, wire estimates |
+
+The 16 x 16 arrays are about 160 000 cells. Timing-driven placement and
+detailed routing of a block that size each take hours on a four-core machine,
+so they go through the reduced flow, and the 8 x 8 arrays are run through
+both to show how the two flows compare. A full 8 x 8 run takes about 50
+minutes, a reduced 16 x 16 run about 10.
+
+Two things in this flow are there because of how OpenROAD (26Q3) behaves when
+it cannot close timing:
+
+* Place and route uses its own clock period (`PERIOD` in `pnr.py`, 10 ns), not
+  the 5 ns of synthesis. Timing is repaired for all corners at once, and at the
+  slow corner 5 ns is out of reach by a factor of two. 10 ns is missed by
+  10 - 20 %, so the result is what the tools reach when pushed.
+* Setup repair runs with `-skip_buffering`. With buffer insertion enabled it
+  left chains of up to 50 single-fanout buffers on paths it could not close,
+  and after routing those chains were the critical path. `pnr.py` checks for
+  this: `crit_path_bufs` is the number of buffers on the worst path and
+  `buf_chain` the longest single-fanout buffer chain in the routed netlist.
+
+Gate-level simulation of a routed array (clock tree and hold buffers included):
+
+```bash
+python3 syn/asic/gls.py --pnr sys_4
+```
 
 ## FPGA
 

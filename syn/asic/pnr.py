@@ -4,6 +4,7 @@
     python3 syn/asic/run.py pe sys_8 bcast_8
     python3 syn/asic/pnr.py pe sys_8 bcast_8
     python3 syn/asic/pnr.py --list
+    python3 syn/asic/pnr.py --parse sys_8     # re-read an existing log
 
 Each job takes the netlist and constraints that syn/asic/run.py left in
 syn/build/asic/<job>/ and runs syn/asic/pnr.tcl on them: floorplan, power grid,
@@ -11,10 +12,27 @@ placement, clock tree, timing repair, global and detailed routing, parasitic
 extraction, and timing at three corners with the extracted wires.
 
 Results are written to syn/asic/pnr_results.csv, logs and layouts (DEF, ODB)
-to syn/build/asic/<job>/pnr/. The "routing" column says how far a job went:
-"detailed" jobs are fully routed and timed with extracted parasitics, "global"
-jobs stop after global routing and are timed with its wire estimates. Frequencies are for the worst
-register-to-register path; hold slack is the worst over all paths.
+to syn/build/asic/<design>/pnr/. Jobs come in two kinds:
+
+  * pe, sys_N, bcast_N: the full flow. Timing-driven placement, detailed
+    routing, timing with extracted parasitics.
+  * sys_N_est, bcast_N_est: a reduced flow for blocks too large for the full
+    one here. Placement for wire length only, global routing only, timing with
+    the wire estimates of global routing. Logs in .../pnr_est/.
+
+Frequencies are 1000 / (period - slack) of the worst register-to-register
+path; hold slack is the worst over all paths and corners.
+
+The clock period is not the one used for synthesis. Synthesis maps for 5 ns,
+which the typical corner almost reaches. Place and route optimises all three
+corners at once and has to close the slow one, where 5 ns is out of reach by a
+factor of two. PERIOD is a target the slow corner misses by 10 - 20 %, so the
+numbers are what the tools reach when pushed, not what they were asked for.
+
+Two columns are sanity checks on the timing repair step, which was seen to
+insert long buffer chains (see pnr.tcl): "crit_path_bufs" counts the buffers on
+the worst path, "buf_chain" is the longest chain of single-fanout buffers
+anywhere in the routed netlist.
 
 Needs openroad on PATH and the sky130A PDK (PDK_ROOT, default ~/pdk/sky130).
 """
@@ -25,6 +43,7 @@ import os
 import re
 import subprocess
 import sys
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -45,21 +64,28 @@ PE_PINS = ("a_i[*] left:* a_valid_i left:* shift_i left:* "
            "b_i[*] top:* c_o[*] top:* b_o[*] bottom:* c_i[*] bottom:*")
 BCAST_PINS = ARRAY_PINS.replace("a_valid_i[*]", "a_valid_i").replace("c_valid_o[*]", "c_valid_o")
 
-FIELDS = ["job", "top", "routing", "util_target", "die_um2", "cell_um2", "util_pct", "period_ns",
-          "fmax_tt_mhz", "fmax_ss_mhz", "fmax_ff_mhz", "hold_slack_ns", "skew_ns",
-          "drc", "wire_um", "runtime_s"]
+PERIOD = 10.0     # ns, see above
+
+FIELDS = ["job", "top", "placement", "routing", "util_target", "die_um2", "cell_um2", "util_pct", "period_ns",
+          "fmax_tt_mhz", "fmax_ss_mhz", "fmax_ff_mhz", "crit_path_bufs", "buf_chain", "hold_slack_ns",
+          "skew_ns", "drc", "wire_um", "runtime_s"]
 
 
 def jobs():
-    out = {"pe": dict(top="gemm_pe", util=50, pins=PE_PINS),
-           "pe_nopipe": dict(top="gemm_pe", util=50, pins=PE_PINS)}
+    out = {"pe": dict(top="gemm_pe", util=50, pins=PE_PINS)}
     for n in (4, 8):
         out[f"sys_{n}"] = dict(top="gemm_array", util=50, pins=ARRAY_PINS)
         out[f"bcast_{n}"] = dict(top="gemm_array_bcast", util=50, pins=BCAST_PINS)
-    # 16 x 16 is about 160 000 cells. Detailed routing would take hours, so
-    # these two stop after global routing and use its wire estimates.
-    out["sys_16"] = dict(top="gemm_array", util=50, pins=ARRAY_PINS, droute=False)
-    out["bcast_16"] = dict(top="gemm_array_bcast", util=50, pins=BCAST_PINS, droute=False)
+    # 16 x 16 is about 160 000 cells. Timing-driven placement and detailed
+    # routing would each take hours, so the two arrays go through a reduced
+    # flow: placement for wire length, buffering by repair_design, timing from
+    # global routing. The 8 x 8 arrays are run through it as well, to show what
+    # the reduced flow does to each architecture where the full one is known.
+    est = dict(util=50, droute=False, timing_place=False)
+    for n in (8, 16):
+        out[f"sys_{n}_est"] = dict(top="gemm_array", design=f"sys_{n}", pins=ARRAY_PINS, **est)
+        out[f"bcast_{n}_est"] = dict(top="gemm_array_bcast", design=f"bcast_{n}",
+                                     pins=BCAST_PINS, **est)
     return out
 
 
@@ -73,27 +99,88 @@ def slack(text):
     return float(m.group(1)) if m else None
 
 
-def run(name, job):
-    src = BUILD / name
+def constraints(src, work, period):
+    """Copy the synthesis constraints with another clock period.
+
+    Input and output delays keep their share of the period.
+    """
+    sdc = (src / "constraints.sdc").read_text()
+    scale = period / float(re.search(r"-period\s+([0-9.]+)", sdc).group(1))
+    sdc = re.sub(r"-period\s+[0-9.]+", f"-period {period}", sdc)
+    sdc = re.sub(r"(set_(?:input|output)_delay\s+)([0-9.]+)",
+                 lambda m: f"{m.group(1)}{float(m.group(2)) * scale:g}", sdc)
+    (work / "constraints.sdc").write_text(sdc)
+
+
+def path_buffers(text):
+    """Number of buffer cells on a reported path."""
+    return len(re.findall(r"\(sky130_fd_sc_hd__(?:buf|clkbuf|dlygate|dlymetal)", text))
+
+
+def longest_buffer_chain(netlist):
+    """Longest chain of buffers that each drive exactly one cell input."""
+    drives = {}     # output net of a buffer -> its input net
+    loads = {}      # net -> number of cell inputs on it
+    for m in re.finditer(r"^\s*(sky130_\w+)\s+\S+\s*\((.*?)\);", netlist, flags=re.M | re.S):
+        pins = dict(re.findall(r"\.(\w+)\(\s*(.*?)\s*\)", m.group(2), flags=re.S))
+        is_buf = re.search(r"__(buf|clkbuf|dlygate|dlymetal)", m.group(1)) and "X" in pins
+        for pin, net in pins.items():
+            if pin not in ("X", "Y", "Q", "Q_N", "HI", "LO", "VPWR", "VGND", "VPB", "VNB"):
+                loads[net] = loads.get(net, 0) + 1
+        if is_buf:
+            drives[pins["X"]] = pins["A"]
+    best = 0
+    for net in drives:
+        n = 0
+        while net in drives and loads.get(net, 0) <= 1:
+            net = drives[net]
+            n += 1
+        best = max(best, n)
+    return best
+
+
+def dirs(name, job):
+    """Directory of the synthesised design and working directory of a job."""
+    src = BUILD / job.get("design", name)
+    return src, src / ("pnr_est" if name.endswith("_est") else "pnr")
+
+
+def run(name, job, threads=4):
+    """Run OpenROAD for one job and return its run time in seconds."""
+    src, work = dirs(name, job)
     if not (src / "netlist.v").exists():
-        raise FileNotFoundError(f"run syn/asic/run.py {name} first")
-    work = src / "pnr"
+        raise FileNotFoundError(f"run syn/asic/run.py {src.name} first")
     work.mkdir(exist_ok=True)
+    constraints(src, work, job.get("period", PERIOD))
     env = dict(os.environ, PDK_ROOT=PDK_ROOT, PNR_TOP=job["top"],
-               PNR_NETLIST=str(src / "netlist.v"), PNR_SDC=str(src / "constraints.sdc"),
+               PNR_NETLIST=str(src / "netlist.v"), PNR_SDC=str(work / "constraints.sdc"),
                PNR_OUT=str(work), PNR_UTIL=str(job["util"]),
                PNR_DENSITY=str(job.get("density", 0.6)),
-               PNR_DROUTE="1" if job.get("droute", True) else "0", PNR_PINS=job["pins"])
+               PNR_DROUTE="1" if job.get("droute", True) else "0",
+               PNR_TIMING_PLACE="1" if job.get("timing_place", True) else "0",
+               PNR_PINS=job["pins"])
     t0 = time.time()
     with open(work / "pnr.log", "w") as f:
-        subprocess.run(["openroad", "-no_init", "-exit", "-threads", "4", str(HERE / "pnr.tcl")],
+        subprocess.run(["openroad", "-no_init", "-exit", "-threads", str(threads),
+                        str(HERE / "pnr.tcl")],
                        stdout=f, stderr=subprocess.STDOUT, env=env, check=True)
+    return time.time() - t0
+
+
+def parse(name, job, runtime=None):
+    """Turn the log and layout of a finished job into one row of the table."""
+    src, work = dirs(name, job)
     log = (work / "pnr.log").read_text()
     if "SECTION end" not in log:
         raise RuntimeError("flow stopped early")
+    if runtime is None:
+        m = re.search(r"^elapsed (\d+) s", log, flags=re.M)
+        runtime = int(m.group(1)) if m else None
 
-    period = float(re.search(r"-period\s+([0-9.]+)", (src / "constraints.sdc").read_text()).group(1))
+    period = float(re.search(r"-period\s+([0-9.]+)", (work / "constraints.sdc").read_text()).group(1))
     fmax = {c: 1000 / (period - slack(section(log, f"setup_r2r {c}"))) for c in ("tt", "ss", "ff")}
+    bufs = max(path_buffers(section(log, f"setup_r2r {c}")) for c in ("tt", "ss", "ff"))
+    chain = longest_buffer_chain((work / f"{job['top']}.pnr.v").read_text())
     hold = min(slack(section(log, f"hold_all {c}")) for c in ("tt", "ss", "ff"))
     area = re.search(r"Design area\s+([0-9.]+)\s+\S+\s+([0-9.]+)%", section(log, "area"))
     die = re.search(r"DIEAREA \( (\d+) (\d+) \) \( (\d+) (\d+) \)",
@@ -104,26 +191,49 @@ def run(name, job):
     routed = job.get("droute", True)
     drc = (work / "drc.rpt").read_text().count("violation type:") if routed else ""
     return dict(
-        job=name, top=job["top"], routing="detailed" if routed else "global",
+        job=name, top=job["top"],
+        placement="timing" if job.get("timing_place", True) else "wire length",
+        routing="detailed" if routed else "global",
         util_target=job["util"],
         die_um2=f"{die_um2:.0f}",
         cell_um2=f"{float(area.group(1)):.0f}", util_pct=area.group(2),
         period_ns=period,
         fmax_tt_mhz=f"{fmax['tt']:.0f}", fmax_ss_mhz=f"{fmax['ss']:.0f}",
         fmax_ff_mhz=f"{fmax['ff']:.0f}",
+        crit_path_bufs=bufs,
+        buf_chain=chain,
         hold_slack_ns=f"{hold:.3f}",
         skew_ns=skew.group(1) if skew else "",
         drc=drc,
         wire_um=wire[-1] if wire else "",
-        runtime_s=f"{time.time() - t0:.0f}",
+        runtime_s="" if runtime is None else f"{runtime:.0f}",
     )
+
+
+def save(rows, order):
+    """Merge rows into the results table, replacing older rows of the same job."""
+    old = []
+    if RESULTS.exists():
+        with open(RESULTS) as f:
+            old = list(csv.DictReader(f))
+    for row in rows:    # a re-parsed log without a run time keeps the recorded one
+        if row["runtime_s"] == "":
+            row["runtime_s"] = next((r["runtime_s"] for r in old if r["job"] == row["job"]), "")
+    old = [r for r in old if r["job"] not in {x["job"] for x in rows}]
+    merged = sorted(old + rows, key=lambda r: order.index(r["job"]) if r["job"] in order else 999)
+    with open(RESULTS, "w", newline="") as f:
+        w = csv.DictWriter(f, fieldnames=FIELDS)
+        w.writeheader()
+        w.writerows(merged)
 
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawTextHelpFormatter)
     ap.add_argument("names", nargs="*")
     ap.add_argument("--list", action="store_true")
-    ap.add_argument("--jobs", type=int, default=1, help="parallel jobs (each uses 4 threads)")
+    ap.add_argument("--parse", action="store_true",
+                    help="do not run OpenROAD, only re-read the logs of earlier runs")
+    ap.add_argument("--jobs", type=int, default=1, help="parallel jobs")
     args = ap.parse_args()
 
     all_jobs = jobs()
@@ -134,32 +244,28 @@ def main():
     for n in names:
         if n not in all_jobs:
             sys.exit(f"unknown job {n}")
+    threads = max(1, (os.cpu_count() or 4) // args.jobs)
+    lock = threading.Lock()
 
     def one(n):
         try:
-            row = run(n, all_jobs[n])
-            print(f"{n}: die {row['die_um2']} um2, util {row['util_pct']}%, "
-                  f"tt {row['fmax_tt_mhz']} / ss {row['fmax_ss_mhz']} MHz, "
-                  f"hold {row['hold_slack_ns']} ns, {row['drc']} DRC, {row['runtime_s']} s",
-                  flush=True)
-            return row
+            runtime = None if args.parse else run(n, all_jobs[n], threads)
+            row = parse(n, all_jobs[n], runtime)
         except Exception as e:  # keep going with the other jobs
-            print(f"{n}: FAILED ({e}), see {BUILD / n / 'pnr'}", flush=True)
-            return None
+            print(f"{n}: FAILED ({e}), see {dirs(n, all_jobs[n])[1]}", flush=True)
+            return
+        print(f"{n}: die {row['die_um2']} um2, util {row['util_pct']}%, "
+              f"tt {row['fmax_tt_mhz']} / ss {row['fmax_ss_mhz']} MHz, "
+              f"hold {row['hold_slack_ns']} ns, {row['drc']} DRC, {row['runtime_s']} s",
+              flush=True)
+        if row["crit_path_bufs"] > 10 or row["buf_chain"] > 10:
+            print(f"{n}: WARNING, {row['crit_path_bufs']} buffers on the critical path, "
+                  f"longest buffer chain {row['buf_chain']}", flush=True)
+        with lock:      # saved after every job, so an interrupted sweep keeps its results
+            save([row], list(all_jobs))
 
     with ThreadPoolExecutor(args.jobs) as pool:
-        rows = [r for r in pool.map(one, names) if r]
-
-    old = []
-    if RESULTS.exists():
-        with open(RESULTS) as f:
-            old = [r for r in csv.DictReader(f) if r["job"] not in {x["job"] for x in rows}]
-    order = list(all_jobs)
-    merged = sorted(old + rows, key=lambda r: order.index(r["job"]) if r["job"] in order else 999)
-    with open(RESULTS, "w", newline="") as f:
-        w = csv.DictWriter(f, fieldnames=FIELDS)
-        w.writeheader()
-        w.writerows(merged)
+        list(pool.map(one, names))
 
 
 if __name__ == "__main__":

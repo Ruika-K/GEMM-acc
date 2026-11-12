@@ -14,11 +14,21 @@ Work in progress. The RTL is functionally complete and verified in simulation:
 on-chip memories, tiles them over the array and streams the result back, with
 AXI4-Lite registers for control.
 
-Implementation results are in [docs/results.md](docs/results.md): standard-cell
-synthesis on SkyWater sky130 with pre-layout timing and gate-level simulation
-(156 kGE and 80 MHz at the slow corner for an 8 x 8 array, memories excluded),
-and an FPGA prototype on a Lattice ECP5. Place and route for the ASIC flow has
-not been done yet.
+Implementation results are in [docs/results.md](docs/results.md). The main
+target is an ASIC flow on SkyWater sky130 with open tools (Yosys, OpenSTA,
+OpenROAD):
+
+* Synthesis of the complete accelerator with an 8 x 8 array: 157 kGE without
+  the memories, 80 MHz at the slow corner before layout.
+* Place and route of the array: 4 x 4 and 8 x 8 fully routed with extracted
+  parasitics, clock tree and hold repair, about 90 MHz at the slow corner;
+  16 x 16 placed and globally routed.
+* A measured comparison with a broadcast (non-systolic) array built from the
+  same datapath netlist. Up to 16 x 16 the broadcast array is as fast and
+  5 - 6 % smaller; the document explains why and where that would change.
+* Gate-level simulation of the synthesised and of the routed netlists.
+
+There is also an FPGA prototype on a Lattice ECP5.
 
 ## Design in brief
 
