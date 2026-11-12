@@ -24,7 +24,7 @@ the parameters the testbench reads, which a netlist no longer has, and the
 testbench samples outputs 200 ps after the edge (TB_SETTLE_PS) so that outputs
 which depend combinationally on an input have settled.
 
-Only the systolic array jobs (sys_N...) are supported.
+Only the systolic array jobs (sys_N, sys_N_sM, ...) are supported.
 """
 
 import os
@@ -44,7 +44,9 @@ module gemm_array_gls #(
     parameter ACC_W   = 32,
     parameter ROWS    = {n},
     parameter COLS    = {n},
-    parameter PE_PIPE = {pipe}
+    parameter PE_PIPE = {pipe},
+    parameter ACC_SEG = {seg},
+    parameter CPA_SEG = 16
 ) (
     input                    clk,
     input                    rst_n,
@@ -83,7 +85,7 @@ def main():
     args = [a for a in sys.argv[1:] if a != "--pnr"]
     post_layout = "--pnr" in sys.argv[1:]
     job = args[0] if args else "sys_4"
-    m = re.fullmatch(r"sys_(\d+)(_nopipe)?(_ripple)?", job)
+    m = re.fullmatch(r"sys_(\d+)(_nopipe)?(_ripple)?(?:_s(\d+))?", job)
     if not m:
         sys.exit("only sys_N jobs are supported")
     netlist = ROOT / "syn" / "build" / "asic" / job / "netlist.v"
@@ -96,7 +98,8 @@ def main():
     build = ROOT / "sim_build" / f"gls_{job}{'_pnr' if post_layout else ''}"
     build.mkdir(parents=True, exist_ok=True)
     wrapper = build / "gemm_array_gls.v"
-    wrapper.write_text(WRAPPER.format(n=m.group(1), pipe=0 if m.group(2) else 1))
+    wrapper.write_text(WRAPPER.format(n=m.group(1), pipe=0 if m.group(2) else 1,
+                                      seg=m.group(4) or 0))
 
     runner = get_runner("icarus")
     runner.build(
