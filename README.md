@@ -18,14 +18,20 @@ Implementation results are in [docs/results.md](docs/results.md). The main
 target is an ASIC flow on SkyWater sky130 with open tools (Yosys, OpenSTA,
 OpenROAD):
 
-* Synthesis of the complete accelerator with an 8 x 8 array: 157 kGE without
-  the memories, 80 MHz at the slow corner before layout.
 * Place and route of the array: 4 x 4 and 8 x 8 fully routed with extracted
-  parasitics, clock tree and hold repair, about 90 MHz at the slow corner;
-  16 x 16 placed and globally routed.
+  parasitics, clock tree and hold repair; 16 x 16 placed and globally routed.
+  The 8 x 8 array reaches 121 MHz at the slow corner (227 MHz typical) on
+  0.88 mm2.
+* The step that got it there from 89 MHz: the critical path was the 32-bit
+  accumulator adder, so the accumulator now saves a carry every 8 bits instead
+  of propagating it (`ACC_SEG`). A sweep from no saved carries to a full
+  carry-save accumulator shows that one saved carry is already enough.
 * A measured comparison with a broadcast (non-systolic) array built from the
-  same datapath netlist. Up to 16 x 16 the broadcast array is as fast and
-  5 - 6 % smaller; the document explains why and where that would change.
+  same datapath netlist. With the plain adder the two are equally fast up to
+  8 x 8; once the pipeline is balanced the systolic array is 5 % faster at
+  8 x 8 and the gap grows with the array.
+* Synthesis of the complete accelerator with an 8 x 8 array: 166 kGE without
+  the memories, 102 MHz at the slow corner before layout.
 * Gate-level simulation of the synthesised and of the routed netlists.
 
 There is also an FPGA prototype on a Lattice ECP5.
@@ -40,6 +46,9 @@ There is also an FPGA prototype on a Lattice ECP5.
 * **One chain for drain and preload.** During a shift phase the accumulators of
   each column form a shift register: results leave at the north edge while the
   addend D of the next tile enters at the south edge.
+* **No carry propagation while accumulating (optional).** With `ACC_SEG > 0`
+  the accumulator keeps a few saved carries next to its sum; they are added in
+  once per column where the results leave the array.
 * **Array size and matrix size are decoupled.** `ROWS`, `COLS`, `DATA_W`,
   `ACC_W` are compile-time parameters; `m`, `n`, `k` are run-time values.
 * **No global stall.** The controller only decides whether to issue a shift
@@ -64,6 +73,7 @@ in [docs/spec.md](docs/spec.md).
 ```
 rtl/gemm_mac.sv       multiply-accumulate datapath of a PE
 rtl/gemm_pe.sv        processing element
+rtl/gemm_cpa.sv       pipelined adder for the saved carries
 rtl/gemm_array.sv     ROWS x COLS mesh of PEs
 rtl/gemm_delay.sv     delay line for skew and de-skew
 rtl/gemm_fifo.sv      output FIFO

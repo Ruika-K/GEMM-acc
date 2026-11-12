@@ -1,10 +1,19 @@
 job,top,placement,routing,util_target,die_um2,cell_um2,util_pct,period_ns,fmax_tt_mhz,fmax_ss_mhz,fmax_ff_mhz,crit_path_bufs,buf_chain,hold_slack_ns,skew_ns,drc,wire_um,runtime_s
-pe,gemm_pe,timing,detailed,50,14886,7372,63,10.0,172,90,275,0,1,0.381,0.01,0,19670,72
-sys_4,gemm_array,timing,detailed,50,206952,113499,58,10.0,173,91,276,0,2,0.212,0.03,0,289804,920
-bcast_4,gemm_array_bcast,timing,detailed,50,196710,106791,57,10.0,172,91,274,2,1,0.274,0.03,0,294149,1026
-sys_8,gemm_array,timing,detailed,50,807841,448295,57,10.0,171,90,274,0,1,0.214,0.04,0,1149965,2822
-bcast_8,gemm_array_bcast,timing,detailed,50,761073,422755,57,10.0,171,90,274,0,2,0.272,0.06,0,1215617,2984
-sys_8_est,gemm_array,wire length,global,50,807841,431448,55,10.0,158,84,250,0,1,0.226,-0.05,,,159
-bcast_8_est,gemm_array_bcast,wire length,global,50,761073,412792,56,10.0,158,84,250,0,1,0.310,-0.06,,,314
-sys_16_est,gemm_array,wire length,global,50,3191779,1718625,55,10.0,157,83,249,0,2,0.027,0.06,,,498
-bcast_16_est,gemm_array_bcast,wire length,global,50,2994146,1601000,54,10.0,157,82,246,2,3,0.018,0.09,,,663
+pe,gemm_pe,timing,detailed,50,14922,7420,63,10.0,170,89,272,0,1,0.384,0.01,0,19357,203
+sys_4,gemm_array,timing,detailed,50,207485,113377,58,10.0,171,90,273,0,2,0.220,0.04,0,289511,826
+bcast_4,gemm_array_bcast,timing,detailed,50,197243,106580,57,10.0,171,90,273,0,1,0.276,0.03,0,291466,857
+sys_8,gemm_array,timing,detailed,50,809946,446979,57,10.0,169,89,270,0,1,0.209,0.04,0,1144259,1787
+bcast_8,gemm_array_bcast,timing,detailed,50,763177,422788,57,10.0,170,90,272,0,1,0.276,0.07,0,1203972,1999
+sys_8_est,gemm_array,wire length,global,50,809946,430563,55,10.0,158,83,249,0,1,0.213,-0.04,,,99
+bcast_8_est,gemm_array_bcast,wire length,global,50,763177,411532,56,10.0,157,83,248,0,1,0.318,0.04,,,196
+sys_16_est,gemm_array,wire length,global,50,3200163,1718920,55,10.0,156,82,248,0,3,0.023,0.05,,,392
+bcast_16_est,gemm_array_bcast,wire length,global,50,3002527,1589921,54,10.0,153,78,244,2,3,0.021,0.10,,,399
+pe_s8,gemm_pe,timing,detailed,50,15120,7176,59,7.0,289,145,484,1,1,0.325,0.01,0,19550,90
+sys_4_s8,gemm_array,timing,detailed,50,238539,130620,58,7.0,228,122,357,3,1,0.202,-0.03,0,315585,857
+bcast_4_s8,gemm_array_bcast,timing,detailed,50,228317,126297,59,7.0,222,118,351,2,1,0.203,0.05,0,319735,886
+sys_8_s8,gemm_array,timing,detailed,50,877182,495710,58,7.0,227,121,358,3,2,0.007,-0.04,0,1274631,3327
+bcast_8_s8,gemm_array_bcast,timing,detailed,50,830431,472298,58,7.0,219,115,343,4,2,0.007,0.08,0,1276254,3416
+sys_8_s8_est,gemm_array,wire length,global,50,877182,471577,55,7.0,217,115,339,2,1,0.010,-0.04,,,120
+bcast_8_s8_est,gemm_array_bcast,wire length,global,50,830431,449927,56,7.0,195,103,305,1,2,0.011,0.06,,,151
+sys_16_s8_est,gemm_array,wire length,global,50,3357030,1830964,55,7.0,215,114,339,2,7,0.025,-0.08,,,427
+bcast_16_s8_est,gemm_array_bcast,wire length,global,50,3159417,1725250,55,7.0,169,91,255,2,8,0.038,0.11,,,409

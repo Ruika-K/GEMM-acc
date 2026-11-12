@@ -54,6 +54,7 @@ Inside `gemm_core`:
 |------------------|------|
 | `gemm_mac`       | Multiply-accumulate datapath of a PE |
 | `gemm_pe`        | Processing element: forwarding registers around a `gemm_mac` |
+| `gemm_cpa`       | Pipelined adder at the north edge, only with `ACC_SEG > 0` |
 | `gemm_array`     | `ROWS x COLS` mesh of PEs, no skew logic |
 | `gemm_delay`     | Fixed delay line used for skew and de-skew |
 | `gemm_fifo`      | Output FIFO |
@@ -108,6 +109,27 @@ Only control registers (valid, shift) are reset. Operand, product and
 accumulator registers are not: the shift phase that starts every tile
 overwrites the accumulators.
 
+**Saved carries (`ACC_SEG`).** The 32-bit adder in front of the accumulator is
+the longest path of the plain PE. With `ACC_SEG = n > 0` it is cut into n-bit
+segments, and the carry out of a segment is saved in a flip-flop and added to
+the next segment one cycle later instead of rippling on in the same cycle:
+
+```
+segment s:  {carry_s+1, sum_s} <= sum_s + addend_s + carry_s
+```
+
+The accumulated value is then the stored sum plus the saved carries, each at
+the bit position where its segment starts. Since accumulation is a running
+sum, a carry that arrives a cycle late is not lost, it is just still pending.
+The pending carries travel along the shift chain together with the sum (the
+chain is `ACC_W + ceil(ACC_W / n) - 1` bits wide), and one pipelined adder per
+column at the north edge (`gemm_cpa`) adds them in. `ACC_SEG = 1` is a full
+carry-save accumulator. A preloaded addend enters with its carries at zero.
+
+Seen from outside the array this changes one thing: results appear
+`ceil(ACC_W / CPA_SEG)` cycles later (two with the defaults). The spacing
+rules of section 4 and the tile period are the same.
+
 ### 2.3 Skew and de-skew
 
 All beats are registered once at the core boundary and then delayed:
@@ -119,7 +141,7 @@ All beats are registered once at the core boundary and then delayed:
 | D, column `j` | `j + PE_PIPE` |
 | shift control | 0 |
 | C, column `j` (after the array) | `COLS - 1 - j` |
-| result tag (valid, last) | `COLS - 1 + PE_PIPE` |
+| result tag (valid, last) | `COLS - 1 + PE_PIPE`, plus the latency of the final adders if `ACC_SEG > 0` |
 
 Data delay lines have no reset so that FPGA tools can map them onto
 shift-register LUTs. Only the 1-bit valid and tag lines are reset.
@@ -204,6 +226,8 @@ which gives one beat per cycle without an extra skid buffer.
 | `COLS`       | 8       | Array columns (tile size in N) |
 | `ACC_W`      | 32      | Accumulator width, signed (at most 32) |
 | `PE_PIPE`    | 1       | 1: register between multiplier and adder |
+| `ACC_SEG`    | 0       | 0: plain accumulator adder. n: save a carry every n bits (1: full carry-save) |
+| `CPA_SEG`    | 16      | With `ACC_SEG > 0`: bits added per cycle by the final adders |
 | `K_MAX`      | 1024    | Largest K, sizes the K counter |
 | `OUT_DEPTH`  | `ROWS`  | Output FIFO depth in rows |
 | `A_DEPTH`    | 1024    | A memory depth, words of `ROWS` elements |
@@ -244,6 +268,9 @@ c_valid_o[j] = 1
 c_o[j]       = next row of the previous result   (row 0 leaves first)
 c_i[j]       = next row of the new addend        (row 0 enters first)
 ```
+
+With `ACC_SEG > 0`, `c_valid_o[j]` and `c_o[j]` are delayed by the final adder
+(`ceil(ACC_W / CPA_SEG)` cycles); `c_i[j]` is not.
 
 A shift phase is `ROWS` beats, not necessarily consecutive. One phase drains
 the previous tile and preloads the next one.
@@ -357,7 +384,8 @@ plain row-major order. `tb/gemm_host.py` contains the reference reordering
 3. **[done]** Tiling, operand memories, AXI4-Lite and AXI4-Stream interfaces.
 4. **[in progress]** Implementation, results in [results.md](results.md).
    * ASIC, sky130: logic synthesis, pre-layout timing, place and route of
-     the array and gate-level simulation are done; SRAM macros, place and
+     the array (plain and with saved carries) and gate-level simulation are
+     done; SRAM macros, place and
      route of the complete accelerator, power and clock gating are not.
    * FPGA prototype: ECP5 done; the Vivado sweep is still to be run.
 5. **[planned]** Extensions, in no fixed order: output requantisation (shift,
