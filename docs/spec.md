@@ -52,12 +52,13 @@ Inside `gemm_core`:
 
 | Module           | Role |
 |------------------|------|
-| `gemm_pe`        | Processing element |
+| `gemm_mac`       | Multiply-accumulate datapath of a PE |
+| `gemm_pe`        | Processing element: forwarding registers around a `gemm_mac` |
 | `gemm_array`     | `ROWS x COLS` mesh of PEs, no skew logic |
 | `gemm_delay`     | Fixed delay line used for skew and de-skew |
 | `gemm_fifo`      | Output FIFO |
 | `gemm_ctrl`      | Tile sequencer and output credits |
-| `gemm_core`      | One-tile engine: the five modules above |
+| `gemm_core`      | One-tile engine: the modules above |
 | `gemm_mem`       | Operand memory, one word per array edge |
 | `gemm_load`      | Writes the row-major input stream into the memories |
 | `gemm_tile_iter` | Walks the tiles of a matrix |

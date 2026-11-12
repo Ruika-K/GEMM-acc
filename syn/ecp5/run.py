@@ -34,7 +34,7 @@ BUILD = ROOT / "syn" / "build" / "ecp5"
 RESULTS = Path(__file__).resolve().parent / "results.csv"
 
 RTL = sorted((ROOT / "rtl").glob("*.sv"))
-ARRAY_SRC = [ROOT / "rtl" / "gemm_pe.sv", ROOT / "rtl" / "gemm_array.sv"] + sorted(
+ARRAY_SRC = [ROOT / "rtl" / f for f in ("gemm_mac.sv", "gemm_pe.sv", "gemm_array.sv")] + sorted(
     (ROOT / "syn" / "common").glob("*.sv")
 )
 

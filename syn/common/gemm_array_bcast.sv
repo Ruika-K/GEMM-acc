@@ -2,9 +2,9 @@
 // gemm_array_bcast: non-systolic baseline, for comparison only.
 //
 // Same arithmetic as gemm_array (one multiply-accumulate per PE, the same
-// optional product register, the same south -> north accumulator chain; see
-// gemm_pe_bcast), but
-// operands and control are broadcast instead of forwarded from PE to PE:
+// optional product register, the same south -> north accumulator chain: every
+// PE is a gemm_mac, the datapath module gemm_pe is built around), but operands
+// and control are broadcast instead of forwarded from PE to PE:
 //
 //   * a_i[i] is registered once and drives all COLS multipliers of row i
 //   * b_i[j] is registered once and drives all ROWS multipliers of column j
@@ -89,7 +89,7 @@ module gemm_array_bcast #(
 
         for (genvar i = 0; i < ROWS; i++) begin : g_row
             for (genvar j = 0; j < COLS; j++) begin : g_col
-                gemm_pe_bcast #(
+                gemm_mac #(
                     .DATA_W (DATA_W),
                     .ACC_W  (ACC_W),
                     .PE_PIPE(PE_PIPE)

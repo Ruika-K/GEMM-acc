@@ -13,7 +13,7 @@ RTL = ROOT / "rtl"
 TB = Path(__file__).resolve().parent
 SIM = "icarus"
 
-ARRAY_SOURCES = [RTL / "gemm_pe.sv", RTL / "gemm_array.sv"]
+ARRAY_SOURCES = [RTL / "gemm_mac.sv", RTL / "gemm_pe.sv", RTL / "gemm_array.sv"]
 CORE_SOURCES = ARRAY_SOURCES + [
     RTL / "gemm_delay.sv",
     RTL / "gemm_fifo.sv",
@@ -132,8 +132,7 @@ def test_gemm_array_bcast(rows, cols, pipe):
     """Baseline used only for the synthesis comparison."""
     simulate(
         "gemm_array_bcast",
-        [ROOT / "syn" / "common" / "gemm_pe_bcast.sv",
-         ROOT / "syn" / "common" / "gemm_array_bcast.sv"],
+        [RTL / "gemm_mac.sv", ROOT / "syn" / "common" / "gemm_array_bcast.sv"],
         "test_gemm_array_bcast",
         {"ROWS": rows, "COLS": cols, "PE_PIPE": pipe},
     )

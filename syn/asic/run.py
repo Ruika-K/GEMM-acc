@@ -12,6 +12,12 @@ Flow per job:
      an array are the same netlist. (Mapping a flattened array gives each PE a
      slightly different implementation and makes the timing depend on the
      array size for no physical reason.)
+     The multiply-accumulate datapath, gemm_mac, goes one step further: it is
+     synthesised once on its own (jobs mac, mac_nopipe, mac_ripple) and that
+     netlist is put into every design that contains it. Technology mapping
+     is not reproducible across designs: the same module mapped as part of
+     two different arrays differed by about 5 % in speed, which is as much as
+     the architectures being compared.
   2. OpenSTA reads the netlist with an SDC file and reports setup slack at the
      typical and the slow corner, and power at the typical corner.
 
@@ -59,11 +65,10 @@ IO_DELAY = 0.2               # fraction of the period reserved outside the block
 ADDER = "sklansky"           # carry architecture: ripple, kogge-stone, han-carlson, sklansky
 
 RTL = [ROOT / "rtl" / f for f in (
-    "gemm_pe.sv", "gemm_array.sv", "gemm_delay.sv", "gemm_fifo.sv", "gemm_ctrl.sv",
+    "gemm_mac.sv", "gemm_pe.sv", "gemm_array.sv", "gemm_delay.sv", "gemm_fifo.sv", "gemm_ctrl.sv",
     "gemm_core.sv", "gemm_tile_iter.sv", "gemm_load.sv", "gemm_seq.sv", "gemm_out.sv",
     "gemm_csr.sv", "gemm_top.sv")]
-BCAST = [ROOT / "syn" / "common" / "gemm_pe_bcast.sv",
-         ROOT / "syn" / "common" / "gemm_array_bcast.sv"]
+BCAST = [ROOT / "rtl" / "gemm_mac.sv", ROOT / "syn" / "common" / "gemm_array_bcast.sv"]
 MEM_BB = HERE / "gemm_mem_blackbox.sv"
 
 FIELDS = ["job", "top", "params", "period_ns", "area_um2", "kge", "cells", "flops",
@@ -72,25 +77,31 @@ FIELDS = ["job", "top", "params", "period_ns", "area_um2", "kge", "cells", "flop
 
 
 def jobs():
-    out = {}
-    for pipe in (1, 0):
-        out["pe" if pipe else "pe_nopipe"] = dict(
-            top="gemm_pe", sources=RTL[:1], params={"PE_PIPE": pipe}, period=5.0)
+    """Job table. "mac" names the job whose gemm_mac netlist a design uses."""
+    mac_src = RTL[:1]
+    out = {
+        "mac": dict(top="gemm_mac", sources=mac_src, params={"PE_PIPE": 1}),
+        "mac_nopipe": dict(top="gemm_mac", sources=mac_src, params={"PE_PIPE": 0}),
+        # Ripple-carry accumulator adder, to show what the adder architecture is worth.
+        "mac_ripple": dict(top="gemm_mac", sources=mac_src, params={"PE_PIPE": 1}, adder="ripple"),
+        "pe": dict(top="gemm_pe", sources=RTL[:2], params={"PE_PIPE": 1}),
+        "pe_nopipe": dict(top="gemm_pe", sources=RTL[:2], params={"PE_PIPE": 0}, mac="mac_nopipe"),
+    }
     for n in (4, 8, 16):
-        out[f"sys_{n}"] = dict(top="gemm_array", sources=RTL[:2],
-                               params={"ROWS": n, "COLS": n}, period=5.0)
+        out[f"sys_{n}"] = dict(top="gemm_array", sources=RTL[:3], params={"ROWS": n, "COLS": n})
         out[f"bcast_{n}"] = dict(top="gemm_array_bcast", sources=BCAST,
-                                 params={"ROWS": n, "COLS": n}, period=5.0)
-    # The same 8 x 8 arrays with a ripple-carry accumulator adder, to show what
-    # the adder architecture is worth.
-    out["sys_8_ripple"] = dict(top="gemm_array", sources=RTL[:2],
-                               params={"ROWS": 8, "COLS": 8}, period=5.0, adder="ripple")
-    out["sys_8_nopipe"] = dict(top="gemm_array", sources=RTL[:2],
-                               params={"ROWS": 8, "COLS": 8, "PE_PIPE": 0}, period=5.0)
-    out["core_8"] = dict(top="gemm_core", sources=RTL[:6],
-                         params={"ROWS": 8, "COLS": 8}, period=5.0)
+                                 params={"ROWS": n, "COLS": n})
+    out["sys_8_ripple"] = dict(top="gemm_array", sources=RTL[:3],
+                               params={"ROWS": 8, "COLS": 8}, mac="mac_ripple")
+    out["sys_8_nopipe"] = dict(top="gemm_array", sources=RTL[:3],
+                               params={"ROWS": 8, "COLS": 8, "PE_PIPE": 0}, mac="mac_nopipe")
+    out["core_8"] = dict(top="gemm_core", sources=RTL[:7], params={"ROWS": 8, "COLS": 8})
     out["top_8"] = dict(top="gemm_top", sources=RTL + [MEM_BB],
-                        params={"ROWS": 8, "COLS": 8}, period=5.0, clock="aclk")
+                        params={"ROWS": 8, "COLS": 8}, clock="aclk")
+    for name, job in out.items():
+        job.setdefault("period", 5.0)
+        if job["top"] != "gemm_mac":
+            job.setdefault("mac", "mac")
     return out
 
 
@@ -105,6 +116,15 @@ def dont_use():
 def sh(cmd, log):
     with open(log, "w") as f:
         subprocess.run([str(c) for c in cmd], stdout=f, stderr=subprocess.STDOUT, check=True)
+
+
+def use_hard_mac(netlist, hard):
+    """Replace the gemm_mac module of a netlist by the separately synthesised one."""
+    block = r"^module (\S*gemm_mac)\s*\(.*?^endmodule\n"
+    body = re.search(block, hard, flags=re.M | re.S).group(0)
+    m = re.search(block, netlist, flags=re.M | re.S)
+    body = body.replace("module gemm_mac", f"module {m.group(1)} ", 1)
+    return netlist[:m.start()] + body + netlist[m.end():]
 
 
 def synth(name, job, work):
@@ -128,7 +148,6 @@ def synth(name, job, work):
         abc -liberty {lib} {dont_use()} -constr {work / 'abc.constr'} -D {period_ps}
         hilomap -hicell sky130_fd_sc_hd__conb_1 HI -locell sky130_fd_sc_hd__conb_1 LO
         opt_clean -purge
-        tee -o {work / 'stat.txt'} stat -liberty {lib} -top {job['top']}
         write_verilog -noattr -noexpr -nohex -nodec {work / 'netlist_yosys.v'}
     """
     (work / "synth.ys").write_text(script)
@@ -142,7 +161,18 @@ def synth(name, job, work):
         p = {k: int(v, 2) for k, v in re.findall(r"\.(\w+)\(32'sb([01]+)\)", m.group(1))}
         return f"gemm_mem_{p['LANES']}x{p['LANE_W']}_d{p['DEPTH']} "
     text = re.sub(r"gemm_mem #\((.*?)\)\s+(?=\w+ \()", macro, text, flags=re.S)
+    if "mac" in job:
+        text = use_hard_mac(text, (BUILD / job["mac"] / "netlist.v").read_text())
     (work / "netlist.v").write_text(text)
+
+    # Area and cell counts are taken from the final netlist.
+    (work / "stat.ys").write_text(f"""
+        read_liberty -lib {lib}
+        read_verilog {work / 'netlist.v'}
+        hierarchy -top {job['top']}
+        tee -o {work / 'stat.txt'} stat -liberty {lib} -top {job['top']}
+    """)
+    sh(["yosys", "-q", "-s", work / "stat.ys"], work / "stat.out")
 
     full = (work / "stat.txt").read_text()
     write_breakdown(full, job["top"], work / "breakdown.txt")
@@ -294,8 +324,14 @@ def main():
             print(f"{n}: FAILED ({Path(str(e.cmd[0])).name}), see {BUILD / n}", flush=True)
             return None
 
+    # The datapath netlists first: the other jobs read them.
+    needed = {all_jobs[n]["mac"] for n in names if "mac" in all_jobs[n]}
+    first = [n for n in all_jobs if n in needed or (n in names and "mac" not in all_jobs[n])]
+    rows = [r for r in map(one, first) if r]
+    if len(rows) != len(first):
+        sys.exit("datapath synthesis failed")
     with ThreadPoolExecutor(args.jobs) as pool:
-        rows = [r for r in pool.map(one, names) if r]
+        rows += [r for r in pool.map(one, [n for n in names if n not in first]) if r]
 
     old = []
     if RESULTS.exists():

@@ -18,12 +18,9 @@
 // accumulator) are initialised by the protocol: every tile starts with a
 // shift phase that overwrites the accumulators.
 //
-// The multiplier is left to the synthesis tool. Vivado builds an 8 x 8 bit
-// multiplier from LUTs by default; define GEMM_USE_DSP to force DSP blocks.
+// The PE is the forwarding registers and the control alignment; the multiply-
+// accumulate datapath itself is gemm_mac.
 // -----------------------------------------------------------------------------
-`ifdef GEMM_USE_DSP
-(* use_dsp = "yes" *)
-`endif
 module gemm_pe #(
     parameter int DATA_W  = 8,   // operand width (signed)
     parameter int ACC_W   = 32,  // accumulator width (signed)
@@ -51,8 +48,6 @@ module gemm_pe #(
     output logic signed [ACC_W-1:0]  c_o
 );
 
-    localparam int PROD_W = 2 * DATA_W;
-
     // ------------------------------------------------------------------
     // Operand forwarding
     // ------------------------------------------------------------------
@@ -72,55 +67,38 @@ module gemm_pe #(
     end
 
     // ------------------------------------------------------------------
-    // Multiply
+    // Control for the accumulate stage
     // ------------------------------------------------------------------
-    logic signed [PROD_W-1:0] a_ext, b_ext, prod;
-
-    assign a_ext = {{DATA_W{a_i[DATA_W-1]}}, a_i};
-    assign b_ext = {{DATA_W{b_i[DATA_W-1]}}, b_i};
-    assign prod  = a_ext * b_ext;
-
-    logic                     mac_valid;
-    logic signed [PROD_W-1:0] mac_prod;
-    logic                     acc_shift;
+    // With the product register the accumulator works one cycle behind the
+    // operands, so its controls are the forwarded (registered) ones.
+    logic mac_valid;
+    logic acc_shift;
 
     generate
         if (PE_PIPE != 0) begin : g_pipe
-            logic                     prod_valid_q;
-            logic signed [PROD_W-1:0] prod_q;
-
-            always_ff @(posedge clk) begin
-                prod_q <= prod;
-            end
-
-            always_ff @(posedge clk) begin
-                if (!rst_n) prod_valid_q <= 1'b0;
-                else        prod_valid_q <= a_valid_i;
-            end
-
-            assign mac_valid = prod_valid_q;
-            assign mac_prod  = prod_q;
+            assign mac_valid = a_valid_o;
             assign acc_shift = shift_o;
         end else begin : g_nopipe
             assign mac_valid = a_valid_i;
-            assign mac_prod  = prod;
             assign acc_shift = shift_i;
         end
     endgenerate
 
     // ------------------------------------------------------------------
-    // Accumulate / shift
+    // Multiply-accumulate
     // ------------------------------------------------------------------
-    logic signed [ACC_W-1:0] acc_q;
-
-    always_ff @(posedge clk) begin
-        if (acc_shift) begin
-            acc_q <= c_i;
-        end else if (mac_valid) begin
-            acc_q <= acc_q + {{(ACC_W - PROD_W){mac_prod[PROD_W-1]}}, mac_prod};
-        end
-    end
-
-    assign c_o = acc_q;
+    gemm_mac #(
+        .DATA_W (DATA_W),
+        .ACC_W  (ACC_W),
+        .PE_PIPE(PE_PIPE)
+    ) u_mac (
+        .clk        (clk),
+        .a_i        (a_i),
+        .b_i        (b_i),
+        .mac_valid_i(mac_valid),
+        .acc_shift_i(acc_shift),
+        .c_i        (c_i),
+        .c_o        (c_o)
+    );
 
 endmodule

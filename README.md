@@ -52,6 +52,7 @@ in [docs/spec.md](docs/spec.md).
 ## Repository layout
 
 ```
+rtl/gemm_mac.sv       multiply-accumulate datapath of a PE
 rtl/gemm_pe.sv        processing element
 rtl/gemm_array.sv     ROWS x COLS mesh of PEs
 rtl/gemm_delay.sv     delay line for skew and de-skew

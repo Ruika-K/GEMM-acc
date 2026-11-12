@@ -49,7 +49,7 @@ if {[llength $argv] > 3} { set PERIOD_DSP [lindex $argv 3] }
 
 set RTL_FILES   [lsort [glob [file join $ROOT rtl *.sv]]]
 set ARRAY_FILES [concat \
-    [list [file join $ROOT rtl gemm_pe.sv] [file join $ROOT rtl gemm_array.sv]] \
+    [list [file join $ROOT rtl gemm_mac.sv] [file join $ROOT rtl gemm_pe.sv] [file join $ROOT rtl gemm_array.sv]] \
     [lsort [glob [file join $ROOT syn common *.sv]]]]
 
 set BUILD   [file join $ROOT syn build vivado]
