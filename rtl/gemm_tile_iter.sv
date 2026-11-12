@@ -34,30 +34,39 @@ module gemm_tile_iter #(
     localparam int NW = $clog2(COLS + 1);
 
     logic [DIM_W-1:0] m_rem_q, n_rem_q;   // rows / columns left, current tile included
-    logic             row_last;
 
-    assign col_last_o = (n_rem_q <= DIM_W'(COLS));
-    assign row_last   = (m_rem_q <= DIM_W'(ROWS));
-    assign last_o     = col_last_o && row_last;
+    // "This is the last tile of its band / the last band" are kept as flags.
+    // They are worked out when the remaining counts are written, from the old
+    // count (left - step <= step is left <= 2 * step), so that no comparator
+    // sits between the counters and the logic that uses the flags.
+    logic col_last_q, row_last_q;
 
-    assign tile_m_o = row_last   ? m_rem_q[MW-1:0] : MW'(ROWS);
-    assign tile_n_o = col_last_o ? n_rem_q[NW-1:0] : NW'(COLS);
+    assign col_last_o = col_last_q;
+    assign last_o     = col_last_q && row_last_q;
+
+    assign tile_m_o = row_last_q ? m_rem_q[MW-1:0] : MW'(ROWS);
+    assign tile_n_o = col_last_q ? n_rem_q[NW-1:0] : NW'(COLS);
 
     always_ff @(posedge clk) begin
         if (!rst_n) begin
             valid_o <= 1'b0;
         end else if (start_i) begin
-            valid_o <= 1'b1;
-            m_rem_q <= m_i;
-            n_rem_q <= n_i;
+            valid_o    <= 1'b1;
+            m_rem_q    <= m_i;
+            n_rem_q    <= n_i;
+            row_last_q <= (m_i <= DIM_W'(ROWS));
+            col_last_q <= (n_i <= DIM_W'(COLS));
         end else if (next_i && valid_o) begin
             if (last_o) begin
                 valid_o <= 1'b0;
-            end else if (col_last_o) begin
-                n_rem_q <= n_i;
-                m_rem_q <= m_rem_q - DIM_W'(ROWS);
+            end else if (col_last_q) begin
+                n_rem_q    <= n_i;
+                col_last_q <= (n_i <= DIM_W'(COLS));
+                m_rem_q    <= m_rem_q - DIM_W'(ROWS);
+                row_last_q <= (m_rem_q <= DIM_W'(2 * ROWS));
             end else begin
-                n_rem_q <= n_rem_q - DIM_W'(COLS);
+                n_rem_q    <= n_rem_q - DIM_W'(COLS);
+                col_last_q <= (n_rem_q <= DIM_W'(2 * COLS));
             end
         end
     end

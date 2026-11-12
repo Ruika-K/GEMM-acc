@@ -96,7 +96,7 @@ module gemm_seq #(
     // ------------------------------------------------------------------
     logic            ab_it_valid, ab_it_col_last, ab_next;
     logic            ab_advance, ab_tile_end;
-    logic [KW-1:0]   ab_k_q;                  // reads issued for the current tile
+    logic [KW-1:0]   ab_k_q;                  // reads still to issue for the tile, minus one
     logic [A_AW-1:0] a_addr_q, a_base_q;
     logic [B_AW-1:0] b_addr_q, b_base_q;
 
@@ -118,7 +118,9 @@ module gemm_seq #(
 
     assign ab_advance  = !ab_valid_o || ab_ready_i;
     assign ab_re_o     = ab_advance && ab_it_valid;
-    assign ab_tile_end = (ab_k_q == k - 1'b1);
+    // Counting down to zero keeps the dimension register and its decrement
+    // out of the path that advances the tile iterator.
+    assign ab_tile_end = (ab_k_q == '0);
     assign ab_next     = ab_re_o && ab_tile_end;
     assign a_addr_o    = a_addr_q;
     assign b_addr_o    = b_addr_q;
@@ -135,18 +137,18 @@ module gemm_seq #(
 
     always_ff @(posedge clk) begin
         if (start_i) begin
-            ab_k_q   <= '0;
+            ab_k_q   <= k - 1'b1;
             a_addr_q <= '0;
             a_base_q <= '0;
             b_addr_q <= '0;
             b_base_q <= '0;
         end else if (ab_re_o) begin
             if (!ab_tile_end) begin
-                ab_k_q   <= ab_k_q + 1'b1;
+                ab_k_q   <= ab_k_q - 1'b1;
                 a_addr_q <= a_addr_q + 1'b1;
                 b_addr_q <= b_addr_q + 1'b1;
             end else begin
-                ab_k_q <= '0;
+                ab_k_q <= k - 1'b1;
                 if (ab_it_col_last) begin
                     // Next band: next segment of A, back to the first of B.
                     a_base_q <= a_base_q + A_AW'(k);

@@ -67,7 +67,7 @@ PE_PINS = ("a_i[*] left:* a_valid_i left:* shift_i left:* "
 BCAST_PINS = ARRAY_PINS.replace("a_valid_i[*]", "a_valid_i").replace("c_valid_o[*]", "c_valid_o")
 
 PERIOD = 10.0     # ns, see above
-PERIOD_S8 = 8.0   # ns, for the variant with saved carries (_s8)
+PERIOD_S8 = 7.0   # ns, for the variant with saved carries (_s8)
 
 FIELDS = ["job", "top", "placement", "routing", "util_target", "die_um2", "cell_um2", "util_pct", "period_ns",
           "fmax_tt_mhz", "fmax_ss_mhz", "fmax_ff_mhz", "crit_path_bufs", "buf_chain", "hold_slack_ns",

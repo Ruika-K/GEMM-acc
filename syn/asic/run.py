@@ -85,6 +85,12 @@ FIELDS = ["job", "top", "params", "period_ns", "area_um2", "kge", "cells", "flop
 
 SEGS = (1, 4, 8, 16)   # ACC_SEG values of the saved-carry variants
 
+# Clock period the logic is mapped for. ABC stops improving a path once it
+# meets this, so the faster variants need a shorter target or everything
+# around the datapath settles at 5 ns.
+PERIOD = 5.0
+PERIOD_SEG = 4.0
+
 
 def jobs():
     """Job table.
@@ -104,24 +110,25 @@ def jobs():
         "cpa": dict(top="gemm_cpa", sources=CPA, params={}),
     }
     for seg in SEGS:
-        out[f"mac_s{seg}"] = dict(top="gemm_mac", sources=MAC, params={"ACC_SEG": seg})
+        out[f"mac_s{seg}"] = dict(top="gemm_mac", sources=MAC, params={"ACC_SEG": seg},
+                                  period=PERIOD_SEG)
 
     def variants():
-        yield "", {}, {"gemm_mac": "mac"}
+        yield "", {}, dict(hard={"gemm_mac": "mac"})
         for seg in SEGS:
-            yield f"_s{seg}", {"ACC_SEG": seg}, {"gemm_mac": f"mac_s{seg}", "gemm_cpa": "cpa"}
+            yield f"_s{seg}", {"ACC_SEG": seg}, dict(
+                hard={"gemm_mac": f"mac_s{seg}", "gemm_cpa": "cpa"}, period=PERIOD_SEG)
 
-    for sfx, extra, hard in variants():
-        out[f"pe{sfx}"] = dict(top="gemm_pe", sources=PE, params={"PE_PIPE": 1, **extra}, hard=hard)
+    for sfx, extra, kw in variants():
+        out[f"pe{sfx}"] = dict(top="gemm_pe", sources=PE, params={"PE_PIPE": 1, **extra}, **kw)
         for n in (4, 8, 16):
             size = {"ROWS": n, "COLS": n, **extra}
-            out[f"sys_{n}{sfx}"] = dict(top="gemm_array", sources=ARRAY, params=size, hard=hard)
-            out[f"bcast_{n}{sfx}"] = dict(top="gemm_array_bcast", sources=BCAST, params=size,
-                                          hard=hard)
+            out[f"sys_{n}{sfx}"] = dict(top="gemm_array", sources=ARRAY, params=size, **kw)
+            out[f"bcast_{n}{sfx}"] = dict(top="gemm_array_bcast", sources=BCAST, params=size, **kw)
         size = {"ROWS": 8, "COLS": 8, **extra}
-        out[f"core_8{sfx}"] = dict(top="gemm_core", sources=CORE, params=size, hard=hard)
+        out[f"core_8{sfx}"] = dict(top="gemm_core", sources=CORE, params=size, **kw)
         out[f"top_8{sfx}"] = dict(top="gemm_top", sources=TOP + [MEM_BB], params=size,
-                                  clock="aclk", hard=hard)
+                                  clock="aclk", **kw)
 
     size = {"ROWS": 8, "COLS": 8}
     out["pe_nopipe"] = dict(top="gemm_pe", sources=PE, params={"PE_PIPE": 0},
@@ -131,7 +138,7 @@ def jobs():
     out["sys_8_nopipe"] = dict(top="gemm_array", sources=ARRAY, params={**size, "PE_PIPE": 0},
                                hard={"gemm_mac": "mac_nopipe"})
     for job in out.values():
-        job.setdefault("period", 5.0)
+        job.setdefault("period", PERIOD)
         job.setdefault("hard", {})
     return out
 
