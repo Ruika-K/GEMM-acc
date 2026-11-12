@@ -26,3 +26,11 @@ def random_matrix(rng, shape, width, mode="random"):
         [[rng.randint(lo, hi) for _ in range(shape[1])] for _ in range(shape[0])],
         dtype=np.int64,
     )
+
+
+def cpa_latency(dut):
+    """Cycles the final adders add to the array outputs (0 without saved carries)."""
+    seg, acc_w = int(dut.ACC_SEG.value), int(dut.ACC_W.value)
+    if seg == 0 or seg >= acc_w:
+        return 0
+    return -(-acc_w // int(dut.CPA_SEG.value))

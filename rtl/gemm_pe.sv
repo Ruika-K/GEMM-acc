@@ -24,7 +24,10 @@
 module gemm_pe #(
     parameter int DATA_W  = 8,   // operand width (signed)
     parameter int ACC_W   = 32,  // accumulator width (signed)
-    parameter int PE_PIPE = 1    // 1: register between multiplier and adder
+    parameter int PE_PIPE = 1,   // 1: register between multiplier and adder
+    parameter int ACC_SEG = 0,   // accumulator carry segments, see gemm_mac
+    localparam int NSEG    = (ACC_SEG != 0) ? (ACC_W + ACC_SEG - 1) / ACC_SEG : 1,
+    localparam int CHAIN_W = ACC_W + NSEG - 1
 ) (
     input  logic                     clk,
     input  logic                     rst_n,      // synchronous, active low
@@ -44,8 +47,8 @@ module gemm_pe #(
     output logic                     shift_o,
 
     // Shift chain, south -> north: drains results and preloads D
-    input  logic signed [ACC_W-1:0]  c_i,
-    output logic signed [ACC_W-1:0]  c_o
+    input  logic [CHAIN_W-1:0]       c_i,
+    output logic [CHAIN_W-1:0]       c_o
 );
 
     // ------------------------------------------------------------------
@@ -90,7 +93,8 @@ module gemm_pe #(
     gemm_mac #(
         .DATA_W (DATA_W),
         .ACC_W  (ACC_W),
-        .PE_PIPE(PE_PIPE)
+        .PE_PIPE(PE_PIPE),
+        .ACC_SEG(ACC_SEG)
     ) u_mac (
         .clk        (clk),
         .a_i        (a_i),

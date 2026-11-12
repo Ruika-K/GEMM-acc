@@ -28,6 +28,8 @@ which the typical corner almost reaches. Place and route optimises all three
 corners at once and has to close the slow one, where 5 ns is out of reach by a
 factor of two. PERIOD is a target the slow corner misses by 10 - 20 %, so the
 numbers are what the tools reach when pushed, not what they were asked for.
+The variant with saved carries is faster and gets a shorter period, PERIOD_S8,
+chosen the same way.
 
 Two columns are sanity checks on the timing repair step, which was seen to
 insert long buffer chains (see pnr.tcl): "crit_path_bufs" counts the buffers on
@@ -65,6 +67,7 @@ PE_PINS = ("a_i[*] left:* a_valid_i left:* shift_i left:* "
 BCAST_PINS = ARRAY_PINS.replace("a_valid_i[*]", "a_valid_i").replace("c_valid_o[*]", "c_valid_o")
 
 PERIOD = 10.0     # ns, see above
+PERIOD_S8 = 8.0   # ns, for the variant with saved carries (_s8)
 
 FIELDS = ["job", "top", "placement", "routing", "util_target", "die_um2", "cell_um2", "util_pct", "period_ns",
           "fmax_tt_mhz", "fmax_ss_mhz", "fmax_ff_mhz", "crit_path_bufs", "buf_chain", "hold_slack_ns",
@@ -72,20 +75,31 @@ FIELDS = ["job", "top", "placement", "routing", "util_target", "die_um2", "cell_
 
 
 def jobs():
-    out = {"pe": dict(top="gemm_pe", util=50, pins=PE_PINS)}
-    for n in (4, 8):
-        out[f"sys_{n}"] = dict(top="gemm_array", util=50, pins=ARRAY_PINS)
-        out[f"bcast_{n}"] = dict(top="gemm_array_bcast", util=50, pins=BCAST_PINS)
-    # 16 x 16 is about 160 000 cells. Timing-driven placement and detailed
-    # routing would each take hours, so the two arrays go through a reduced
-    # flow: placement for wire length, buffering by repair_design, timing from
-    # global routing. The 8 x 8 arrays are run through it as well, to show what
-    # the reduced flow does to each architecture where the full one is known.
-    est = dict(util=50, droute=False, timing_place=False)
-    for n in (8, 16):
-        out[f"sys_{n}_est"] = dict(top="gemm_array", design=f"sys_{n}", pins=ARRAY_PINS, **est)
-        out[f"bcast_{n}_est"] = dict(top="gemm_array_bcast", design=f"bcast_{n}",
-                                     pins=BCAST_PINS, **est)
+    """Job table: the plain accumulator and the variant with a carry saved
+    every 8 bits (suffix _s8, see syn/asic/run.py).
+
+    The faster variant gets a shorter clock period, so that both are pushed
+    equally hard.
+    """
+    out = {}
+    for sfx, period in (("", PERIOD), ("_s8", PERIOD_S8)):
+        full = dict(util=50, period=period)
+        out[f"pe{sfx}"] = dict(top="gemm_pe", pins=PE_PINS, **full)
+        for n in (4, 8):
+            out[f"sys_{n}{sfx}"] = dict(top="gemm_array", pins=ARRAY_PINS, **full)
+            out[f"bcast_{n}{sfx}"] = dict(top="gemm_array_bcast", pins=BCAST_PINS, **full)
+        # 16 x 16 is about 160 000 cells. Timing-driven placement and detailed
+        # routing would each take hours, so the two arrays go through a
+        # reduced flow: placement for wire length, buffering by repair_design,
+        # timing from global routing. The 8 x 8 arrays are run through it as
+        # well, to show what the reduced flow does to each architecture where
+        # the full one is known.
+        est = dict(util=50, period=period, droute=False, timing_place=False)
+        for n in (8, 16):
+            out[f"sys_{n}{sfx}_est"] = dict(top="gemm_array", design=f"sys_{n}{sfx}",
+                                            pins=ARRAY_PINS, **est)
+            out[f"bcast_{n}{sfx}_est"] = dict(top="gemm_array_bcast", design=f"bcast_{n}{sfx}",
+                                              pins=BCAST_PINS, **est)
     return out
 
 
@@ -234,6 +248,8 @@ def main():
     ap.add_argument("--parse", action="store_true",
                     help="do not run OpenROAD, only re-read the logs of earlier runs")
     ap.add_argument("--jobs", type=int, default=1, help="parallel jobs")
+    ap.add_argument("--threads", type=int, default=0,
+                    help="threads per job (default: all cores divided by --jobs)")
     args = ap.parse_args()
 
     all_jobs = jobs()
@@ -244,7 +260,7 @@ def main():
     for n in names:
         if n not in all_jobs:
             sys.exit(f"unknown job {n}")
-    threads = max(1, (os.cpu_count() or 4) // args.jobs)
+    threads = args.threads or max(1, (os.cpu_count() or 4) // args.jobs)
     lock = threading.Lock()
 
     def one(n):

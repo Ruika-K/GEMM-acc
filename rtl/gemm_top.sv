@@ -25,6 +25,7 @@ module gemm_top #(
     parameter int ROWS       = 8,
     parameter int COLS       = 8,
     parameter int PE_PIPE    = 1,
+    parameter int ACC_SEG    = 0,      // accumulator carry segments, see gemm_mac
     parameter int K_MAX      = 1024,
     parameter int OUT_DEPTH  = ROWS,
     parameter int A_DEPTH    = 1024,   // words of ROWS elements
@@ -263,6 +264,7 @@ module gemm_top #(
         .ROWS     (ROWS),
         .COLS     (COLS),
         .PE_PIPE  (PE_PIPE),
+        .ACC_SEG  (ACC_SEG),
         .K_MAX    (K_MAX),
         .OUT_DEPTH(OUT_DEPTH)
     ) u_core (

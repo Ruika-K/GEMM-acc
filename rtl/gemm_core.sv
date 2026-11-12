@@ -28,6 +28,8 @@ module gemm_core #(
     parameter int ROWS      = 8,
     parameter int COLS      = 8,
     parameter int PE_PIPE   = 1,
+    parameter int ACC_SEG   = 0,      // accumulator carry segments, see gemm_mac
+    parameter int CPA_SEG   = 16,     // ACC_SEG > 0: segment width of the final adders
     parameter int K_MAX     = 1024,
     parameter int OUT_DEPTH = ROWS    // output FIFO depth in rows
 ) (
@@ -171,7 +173,9 @@ module gemm_core #(
         .ACC_W  (ACC_W),
         .ROWS   (ROWS),
         .COLS   (COLS),
-        .PE_PIPE(PE_PIPE)
+        .PE_PIPE(PE_PIPE),
+        .ACC_SEG(ACC_SEG),
+        .CPA_SEG(CPA_SEG)
     ) u_array (
         .clk      (clk),
         .rst_n    (rst_n),
@@ -186,9 +190,12 @@ module gemm_core #(
 
     // ------------------------------------------------------------------
     // De-skew: column j leaves the array j + PE_PIPE cycles after its shift
-    // beat; delay it by COLS - 1 - j more so the whole row lines up. The tag
-    // travels the same COLS - 1 + PE_PIPE cycles.
+    // beat, plus the latency of the final adder when the accumulators keep
+    // saved carries; delay it by COLS - 1 - j more so the whole row lines
+    // up. The tag travels the same number of cycles.
     // ------------------------------------------------------------------
+    localparam int CPA_LAT = (ACC_SEG != 0 && ACC_SEG < ACC_W) ? (ACC_W + CPA_SEG - 1) / CPA_SEG : 0;
+
     logic [COLS-1:0][ACC_W-1:0] c_row;
     logic [1:0]                 tag_d;
 
@@ -200,7 +207,7 @@ module gemm_core #(
         end
     endgenerate
 
-    gemm_delay #(.WIDTH(2), .STAGES(COLS - 1 + PE_PIPE), .RESET(1)) u_tag (
+    gemm_delay #(.WIDTH(2), .STAGES(COLS - 1 + PE_PIPE + CPA_LAT), .RESET(1)) u_tag (
         .clk(clk), .rst_n(rst_n), .d_i(tag_q), .q_o(tag_d)
     );
 

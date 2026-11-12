@@ -14,7 +14,7 @@ import numpy as np
 from cocotb.clock import Clock
 from cocotb.triggers import ReadOnly, RisingEdge, Timer
 
-from util import pack, random_matrix, to_signed
+from util import cpa_latency, pack, random_matrix, to_signed
 
 
 class ArrayParams:
@@ -24,6 +24,7 @@ class ArrayParams:
         self.rows = int(dut.ROWS.value)
         self.cols = int(dut.COLS.value)
         self.pipe = int(dut.PE_PIPE.value)
+        self.lat = cpa_latency(dut)   # results leave this many cycles later
 
 
 class Schedule:
@@ -48,7 +49,7 @@ class Schedule:
             for j in range(p.cols):
                 # Column j shifts j cycles later, plus the PE pipeline stage.
                 self.c[(ts + s + j + p.pipe, j)] = int(d[r, j])
-        self.length = max(self.length, ts + slots[-1] + p.cols + p.pipe + 1)
+        self.length = max(self.length, ts + slots[-1] + p.cols + p.pipe + p.lat + 1)
         return slots[-1] + 1  # number of slots consumed
 
     def add_compute(self, t0, a, b, slots=None):

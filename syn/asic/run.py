@@ -13,8 +13,9 @@ Flow per job:
      slightly different implementation and makes the timing depend on the
      array size for no physical reason.)
      The multiply-accumulate datapath, gemm_mac, goes one step further: it is
-     synthesised once on its own (jobs mac, mac_nopipe, mac_ripple) and that
-     netlist is put into every design that contains it. Technology mapping
+     synthesised once on its own (jobs mac, mac_nopipe, mac_ripple, mac_sN)
+     and that netlist is put into every design that contains it; the same is
+     done for the final adder of the saved-carry variants (job cpa). Technology mapping
      is not reproducible across designs: the same module mapped as part of
      two different arrays differed by about 5 % in speed, which is as much as
      the architectures being compared.
@@ -64,11 +65,17 @@ LOAD_PF = 0.0334             # input pin of an inv_16
 IO_DELAY = 0.2               # fraction of the period reserved outside the block
 ADDER = "sklansky"           # carry architecture: ripple, kogge-stone, han-carlson, sklansky
 
-RTL = [ROOT / "rtl" / f for f in (
-    "gemm_mac.sv", "gemm_pe.sv", "gemm_array.sv", "gemm_delay.sv", "gemm_fifo.sv", "gemm_ctrl.sv",
-    "gemm_core.sv", "gemm_tile_iter.sv", "gemm_load.sv", "gemm_seq.sv", "gemm_out.sv",
-    "gemm_csr.sv", "gemm_top.sv")]
-BCAST = [ROOT / "rtl" / "gemm_mac.sv", ROOT / "syn" / "common" / "gemm_array_bcast.sv"]
+def rtl(*names):
+    return [ROOT / "rtl" / f"{n}.sv" for n in names]
+
+
+MAC = rtl("gemm_mac")
+CPA = rtl("gemm_cpa")
+PE = rtl("gemm_mac", "gemm_pe")
+ARRAY = rtl("gemm_mac", "gemm_cpa", "gemm_pe", "gemm_array")
+CORE = ARRAY + rtl("gemm_delay", "gemm_fifo", "gemm_ctrl", "gemm_core")
+TOP = CORE + rtl("gemm_tile_iter", "gemm_load", "gemm_seq", "gemm_out", "gemm_csr", "gemm_top")
+BCAST = rtl("gemm_mac", "gemm_cpa") + [ROOT / "syn" / "common" / "gemm_array_bcast.sv"]
 MEM_BB = HERE / "gemm_mem_blackbox.sv"
 
 FIELDS = ["job", "top", "params", "period_ns", "area_um2", "kge", "cells", "flops",
@@ -76,32 +83,56 @@ FIELDS = ["job", "top", "params", "period_ns", "area_um2", "kge", "cells", "flop
           "io_slack_tt_ns", "power_tt_mw", "synth_s"]
 
 
+SEGS = (1, 4, 8, 16)   # ACC_SEG values of the saved-carry variants
+
+
 def jobs():
-    """Job table. "mac" names the job whose gemm_mac netlist a design uses."""
-    mac_src = RTL[:1]
+    """Job table.
+
+    "hard" maps a module to the job whose netlist of that module a design
+    uses: these modules are synthesised once, on their own.
+
+    A suffix _sN marks the variant with a carry saved every N bits of the
+    accumulator (ACC_SEG = N; _s1 is the full carry-save accumulator).
+    """
     out = {
-        "mac": dict(top="gemm_mac", sources=mac_src, params={"PE_PIPE": 1}),
-        "mac_nopipe": dict(top="gemm_mac", sources=mac_src, params={"PE_PIPE": 0}),
+        "mac": dict(top="gemm_mac", sources=MAC, params={"PE_PIPE": 1}),
+        "mac_nopipe": dict(top="gemm_mac", sources=MAC, params={"PE_PIPE": 0}),
         # Ripple-carry accumulator adder, to show what the adder architecture is worth.
-        "mac_ripple": dict(top="gemm_mac", sources=mac_src, params={"PE_PIPE": 1}, adder="ripple"),
-        "pe": dict(top="gemm_pe", sources=RTL[:2], params={"PE_PIPE": 1}),
-        "pe_nopipe": dict(top="gemm_pe", sources=RTL[:2], params={"PE_PIPE": 0}, mac="mac_nopipe"),
+        "mac_ripple": dict(top="gemm_mac", sources=MAC, params={"PE_PIPE": 1}, adder="ripple"),
+        # The pipelined adder that adds the saved carries in at the array edge.
+        "cpa": dict(top="gemm_cpa", sources=CPA, params={}),
     }
-    for n in (4, 8, 16):
-        out[f"sys_{n}"] = dict(top="gemm_array", sources=RTL[:3], params={"ROWS": n, "COLS": n})
-        out[f"bcast_{n}"] = dict(top="gemm_array_bcast", sources=BCAST,
-                                 params={"ROWS": n, "COLS": n})
-    out["sys_8_ripple"] = dict(top="gemm_array", sources=RTL[:3],
-                               params={"ROWS": 8, "COLS": 8}, mac="mac_ripple")
-    out["sys_8_nopipe"] = dict(top="gemm_array", sources=RTL[:3],
-                               params={"ROWS": 8, "COLS": 8, "PE_PIPE": 0}, mac="mac_nopipe")
-    out["core_8"] = dict(top="gemm_core", sources=RTL[:7], params={"ROWS": 8, "COLS": 8})
-    out["top_8"] = dict(top="gemm_top", sources=RTL + [MEM_BB],
-                        params={"ROWS": 8, "COLS": 8}, clock="aclk")
-    for name, job in out.items():
+    for seg in SEGS:
+        out[f"mac_s{seg}"] = dict(top="gemm_mac", sources=MAC, params={"ACC_SEG": seg})
+
+    def variants():
+        yield "", {}, {"gemm_mac": "mac"}
+        for seg in SEGS:
+            yield f"_s{seg}", {"ACC_SEG": seg}, {"gemm_mac": f"mac_s{seg}", "gemm_cpa": "cpa"}
+
+    for sfx, extra, hard in variants():
+        out[f"pe{sfx}"] = dict(top="gemm_pe", sources=PE, params={"PE_PIPE": 1, **extra}, hard=hard)
+        for n in (4, 8, 16):
+            size = {"ROWS": n, "COLS": n, **extra}
+            out[f"sys_{n}{sfx}"] = dict(top="gemm_array", sources=ARRAY, params=size, hard=hard)
+            out[f"bcast_{n}{sfx}"] = dict(top="gemm_array_bcast", sources=BCAST, params=size,
+                                          hard=hard)
+        size = {"ROWS": 8, "COLS": 8, **extra}
+        out[f"core_8{sfx}"] = dict(top="gemm_core", sources=CORE, params=size, hard=hard)
+        out[f"top_8{sfx}"] = dict(top="gemm_top", sources=TOP + [MEM_BB], params=size,
+                                  clock="aclk", hard=hard)
+
+    size = {"ROWS": 8, "COLS": 8}
+    out["pe_nopipe"] = dict(top="gemm_pe", sources=PE, params={"PE_PIPE": 0},
+                            hard={"gemm_mac": "mac_nopipe"})
+    out["sys_8_ripple"] = dict(top="gemm_array", sources=ARRAY, params=size,
+                               hard={"gemm_mac": "mac_ripple"})
+    out["sys_8_nopipe"] = dict(top="gemm_array", sources=ARRAY, params={**size, "PE_PIPE": 0},
+                               hard={"gemm_mac": "mac_nopipe"})
+    for job in out.values():
         job.setdefault("period", 5.0)
-        if job["top"] != "gemm_mac":
-            job.setdefault("mac", "mac")
+        job.setdefault("hard", {})
     return out
 
 
@@ -118,12 +149,14 @@ def sh(cmd, log):
         subprocess.run([str(c) for c in cmd], stdout=f, stderr=subprocess.STDOUT, check=True)
 
 
-def use_hard_mac(netlist, hard):
-    """Replace the gemm_mac module of a netlist by the separately synthesised one."""
-    block = r"^module (\S*gemm_mac)\s*\(.*?^endmodule\n"
+def use_hard(netlist, module, hard):
+    """Replace a module of a netlist by the separately synthesised one."""
+    block = rf"^module (\S*{module})\s*\(.*?^endmodule\n"
     body = re.search(block, hard, flags=re.M | re.S).group(0)
     m = re.search(block, netlist, flags=re.M | re.S)
-    body = body.replace("module gemm_mac", f"module {m.group(1)} ", 1)
+    if m is None:       # not instantiated in this configuration
+        return netlist
+    body = body.replace(f"module {module}", f"module {m.group(1)} ", 1)
     return netlist[:m.start()] + body + netlist[m.end():]
 
 
@@ -139,7 +172,7 @@ def synth(name, job, work):
         f"set_driving_cell {DRIVING_CELL}\nset_load {LOAD_PF * 1000}\n")
     script = f"""
         read_verilog -sv -DSYNTHESIS {' '.join(str(s) for s in job['sources'])}
-        chparam {chparam} {job['top']}
+        {f"chparam {chparam} {job['top']}" if chparam else ""}
         hierarchy -top {job['top']}
         rename -top {job['top']}
         synth -booth {extra}
@@ -161,8 +194,8 @@ def synth(name, job, work):
         p = {k: int(v, 2) for k, v in re.findall(r"\.(\w+)\(32'sb([01]+)\)", m.group(1))}
         return f"gemm_mem_{p['LANES']}x{p['LANE_W']}_d{p['DEPTH']} "
     text = re.sub(r"gemm_mem #\((.*?)\)\s+(?=\w+ \()", macro, text, flags=re.S)
-    if "mac" in job:
-        text = use_hard_mac(text, (BUILD / job["mac"] / "netlist.v").read_text())
+    for module, source in job["hard"].items():
+        text = use_hard(text, module, (BUILD / source / "netlist.v").read_text())
     (work / "netlist.v").write_text(text)
 
     # Area and cell counts are taken from the final netlist.
@@ -325,8 +358,8 @@ def main():
             return None
 
     # The datapath netlists first: the other jobs read them.
-    needed = {all_jobs[n]["mac"] for n in names if "mac" in all_jobs[n]}
-    first = [n for n in all_jobs if n in needed or (n in names and "mac" not in all_jobs[n])]
+    needed = {src for n in names for src in all_jobs[n]["hard"].values()}
+    first = [n for n in all_jobs if n in needed or (n in names and not all_jobs[n]["hard"])]
     rows = [r for r in map(one, first) if r]
     if len(rows) != len(first):
         sys.exit("datapath synthesis failed")

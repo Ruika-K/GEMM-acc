@@ -18,7 +18,9 @@ module gemm_array_bcast #(
     parameter int ACC_W   = 32,
     parameter int ROWS    = 8,
     parameter int COLS    = 8,
-    parameter int PE_PIPE = 1
+    parameter int PE_PIPE = 1,
+    parameter int ACC_SEG = 0,
+    parameter int CPA_SEG = 16
 ) (
     input  logic                        clk,
     input  logic                        rst_n,
@@ -76,15 +78,47 @@ module gemm_array_bcast #(
         end
     endgenerate
 
-    assign c_valid_o = acc_shift;
-
     // Shift chain: flat index r * COLS + j, row ROWS is the south edge.
-    logic [(ROWS+1)*COLS*ACC_W-1:0] acc;
+    localparam int NSEG    = (ACC_SEG != 0) ? (ACC_W + ACC_SEG - 1) / ACC_SEG : 1;
+    localparam int CHAIN_W = ACC_W + NSEG - 1;
+
+    logic [(ROWS+1)*COLS*CHAIN_W-1:0] acc;
+    /* verilator lint_off UNUSED */
+    logic [COLS-1:0]                  c_valid;   // all columns are alike
+    /* verilator lint_on UNUSED */
+
+    assign c_valid_o = c_valid[0];
 
     generate
         for (genvar j = 0; j < COLS; j++) begin : g_edge
-            assign acc[(ROWS*COLS + j)*ACC_W +: ACC_W] = c_i[j];
-            assign c_o[j] = acc[j*ACC_W +: ACC_W];
+            assign acc[(ROWS*COLS + j)*CHAIN_W +: CHAIN_W] = CHAIN_W'(c_i[j]);
+
+            // Same final adder per column as in gemm_array.
+            if (NSEG > 1) begin : g_resolve
+                logic [ACC_W-1:0] carries;
+                always_comb begin
+                    carries = '0;
+                    for (int s = 1; s < NSEG; s++) begin
+                        carries[s * ACC_SEG] = acc[j*CHAIN_W + ACC_W + s - 1];
+                    end
+                end
+
+                gemm_cpa #(
+                    .W  (ACC_W),
+                    .SEG(CPA_SEG)
+                ) u_cpa (
+                    .clk    (clk),
+                    .rst_n  (rst_n),
+                    .valid_i(acc_shift),
+                    .a_i    (acc[j*CHAIN_W +: ACC_W]),
+                    .b_i    (carries),
+                    .valid_o(c_valid[j]),
+                    .sum_o  (c_o[j])
+                );
+            end else begin : g_direct
+                assign c_o[j]     = acc[j*CHAIN_W +: CHAIN_W];
+                assign c_valid[j] = acc_shift;
+            end
         end
 
         for (genvar i = 0; i < ROWS; i++) begin : g_row
@@ -92,15 +126,16 @@ module gemm_array_bcast #(
                 gemm_mac #(
                     .DATA_W (DATA_W),
                     .ACC_W  (ACC_W),
-                    .PE_PIPE(PE_PIPE)
+                    .PE_PIPE(PE_PIPE),
+                    .ACC_SEG(ACC_SEG)
                 ) u_pe (
                     .clk        (clk),
                     .a_i        (a_q[i]),
                     .b_i        (b_q[j]),
                     .mac_valid_i(mac_valid),
                     .acc_shift_i(acc_shift),
-                    .c_i        (acc[((i+1)*COLS + j)*ACC_W +: ACC_W]),
-                    .c_o        (acc[(i*COLS + j)*ACC_W +: ACC_W])
+                    .c_i        (acc[((i+1)*COLS + j)*CHAIN_W +: CHAIN_W]),
+                    .c_o        (acc[(i*COLS + j)*CHAIN_W +: CHAIN_W])
                 );
             end
         end

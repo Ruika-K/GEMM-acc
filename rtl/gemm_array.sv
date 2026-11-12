@@ -20,6 +20,11 @@
 // row of the previous result and c_i[j] must carry the next row of the new
 // addend. Row 0 goes first in both directions.
 //
+// With ACC_SEG > 0 the accumulators keep saved carries (see gemm_mac) and each
+// column has a pipelined adder at the north edge that adds them in (gemm_cpa).
+// c_valid_o[j] and c_o[j] then appear ceil(ACC_W / CPA_SEG) cycles later;
+// everything else is unchanged.
+//
 // Required spacing (see docs/spec.md), independent of PE_PIPE:
 //   first operand slot  >  last shift beat of the preload
 //   next shift beat     >= last operand slot + ROWS
@@ -30,7 +35,9 @@ module gemm_array #(
     parameter int ACC_W   = 32,
     parameter int ROWS    = 8,
     parameter int COLS    = 8,
-    parameter int PE_PIPE = 1
+    parameter int PE_PIPE = 1,
+    parameter int ACC_SEG = 0,    // accumulator carry segments, see gemm_mac
+    parameter int CPA_SEG = 16    // ACC_SEG > 0: segment width of the final adders
 ) (
     input  logic                             clk,
     input  logic                             rst_n,
@@ -53,6 +60,10 @@ module gemm_array #(
     output logic        [COLS-1:0][ACC_W-1:0]  c_o
 );
 
+    // Width of the shift chain: the accumulator plus its saved carries.
+    localparam int NSEG    = (ACC_SEG != 0) ? (ACC_W + ACC_SEG - 1) / ACC_SEG : 1;
+    localparam int CHAIN_W = ACC_W + NSEG - 1;
+
     // Horizontal nets: index [row][col], col = COLS is the unused east edge.
     logic              av [0:ROWS-1][0:COLS];
     logic [DATA_W-1:0] a  [0:ROWS-1][0:COLS];
@@ -60,7 +71,7 @@ module gemm_array #(
 
     // Vertical nets: index [row][col], row = ROWS is the south edge.
     logic [DATA_W-1:0] b  [0:ROWS][0:COLS-1];
-    logic [ACC_W-1:0]  c  [0:ROWS][0:COLS-1];
+    logic [CHAIN_W-1:0] c [0:ROWS][0:COLS-1];
 
     generate
         for (genvar i = 0; i < ROWS; i++) begin : g_west
@@ -70,11 +81,37 @@ module gemm_array #(
         end
 
         for (genvar j = 0; j < COLS; j++) begin : g_north_south
-            assign b[0][j]      = b_i[j];
-            assign c[ROWS][j]   = c_i[j];
-            assign c_o[j]       = c[0][j];
+            assign b[0][j]    = b_i[j];
+            // Preload: the value goes into the sum, the saved carries are zero.
+            assign c[ROWS][j] = CHAIN_W'(c_i[j]);
+
             // A column is being drained exactly while its accumulators shift.
-            assign c_valid_o[j] = sh[0][j + PE_PIPE];
+            if (NSEG > 1) begin : g_resolve
+                // Saved carry s belongs at the bit where segment s starts.
+                logic [ACC_W-1:0] carries;
+                always_comb begin
+                    carries = '0;
+                    for (int s = 1; s < NSEG; s++) begin
+                        carries[s * ACC_SEG] = c[0][j][ACC_W + s - 1];
+                    end
+                end
+
+                gemm_cpa #(
+                    .W  (ACC_W),
+                    .SEG(CPA_SEG)
+                ) u_cpa (
+                    .clk    (clk),
+                    .rst_n  (rst_n),
+                    .valid_i(sh[0][j + PE_PIPE]),
+                    .a_i    (c[0][j][ACC_W-1:0]),
+                    .b_i    (carries),
+                    .valid_o(c_valid_o[j]),
+                    .sum_o  (c_o[j])
+                );
+            end else begin : g_direct
+                assign c_o[j]       = c[0][j];
+                assign c_valid_o[j] = sh[0][j + PE_PIPE];
+            end
         end
 
         for (genvar i = 0; i < ROWS; i++) begin : g_row
@@ -82,7 +119,8 @@ module gemm_array #(
                 gemm_pe #(
                     .DATA_W (DATA_W),
                     .ACC_W  (ACC_W),
-                    .PE_PIPE(PE_PIPE)
+                    .PE_PIPE(PE_PIPE),
+                    .ACC_SEG(ACC_SEG)
                 ) u_pe (
                     .clk      (clk),
                     .rst_n    (rst_n),

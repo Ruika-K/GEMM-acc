@@ -13,7 +13,7 @@ import numpy as np
 from cocotb.clock import Clock
 from cocotb.triggers import ReadOnly, RisingEdge
 
-from util import pack, random_matrix, to_signed
+from util import cpa_latency, pack, random_matrix, to_signed
 
 SEED = int(os.environ.get("TB_SEED", "1"))
 
@@ -46,7 +46,7 @@ async def run_tile(dut, a, b, d, drained):
         sched.setdefault(t0 + k, {}).update(
             valid=1, a_col=[int(v) for v in a[:, k]], b_row=[int(v) for v in b[k, :]]
         )
-    for cyc in range(t0 + a.shape[1] + lat + 1):
+    for cyc in range(t0 + a.shape[1] + lat + 1 + cpa_latency(dut)):
         await step(**sched.get(cyc, {}))
 
 
