@@ -62,7 +62,7 @@ python3 syn/asic/pnr.py --parse sys_4      # re-read the log of an earlier run
 tree synthesis, setup and hold repair, global and detailed routing, parasitic
 extraction, then timing at the typical, slow and fast corner with the extracted
 wires. Pins are placed on the side their data flows through (A on the west
-edge, B on the north edge, the accumulator chain south to north). Results go to
+edge, B on the north edge, the shift chain south to north). Results go to
 `syn/asic/pnr_results.csv`, the layout (DEF, ODB), the SPEF and the log to
 `syn/build/asic/<design>/pnr/` (`pnr_est/` for the reduced flow).
 
@@ -115,7 +115,7 @@ bits than a device has pins; with the harness every array path is register to
 register and the wrapper itself is one LUT deep.
 
 `common/gemm_array_bcast.sv` is the comparison point: the same multiply,
-product register and accumulator chain per PE, but operands and control are
+product register, accumulator and shift chain per PE, but operands and control are
 registered once at the edge and broadcast instead of being forwarded from PE to
 PE. It is checked against numpy by `tb/test_gemm_array_bcast.py`.
 

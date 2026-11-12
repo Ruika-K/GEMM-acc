@@ -2,7 +2,7 @@
 // gemm_array_bcast: non-systolic baseline, for comparison only.
 //
 // Same arithmetic as gemm_array (one multiply-accumulate per PE, the same
-// optional product register, the same south -> north accumulator chain: every
+// optional product register, the same south -> north shift chain: every
 // PE is a gemm_mac, the datapath module gemm_pe is built around), but operands
 // and control are broadcast instead of forwarded from PE to PE:
 //
@@ -78,7 +78,7 @@ module gemm_array_bcast #(
 
     assign c_valid_o = acc_shift;
 
-    // Accumulator chain: flat index r * COLS + j, row ROWS is the south edge.
+    // Shift chain: flat index r * COLS + j, row ROWS is the south edge.
     logic [(ROWS+1)*COLS*ACC_W-1:0] acc;
 
     generate

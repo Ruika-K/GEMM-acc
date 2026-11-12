@@ -78,7 +78,12 @@ Each PE owns one element of C and accumulates it in place.
 | A operand + valid | west -> east   | yes               |
 | B operand         | north -> south | yes               |
 | shift control     | west -> east   | yes               |
-| accumulator chain | south -> north | (the accumulator) |
+| shift chain       | south -> north | (the accumulator) |
+
+Accumulation happens inside a PE and uses none of these connections. The
+shift chain is only used while `shift` is high: the accumulators of a column
+then form a shift register that moves results north, out of the array, and
+takes the next addend in from the south.
 
 Every connection is between neighbouring PEs. The only signal with fan-out
 larger than one PE is `shift_i`, which feeds the `ROWS` PEs of the west column.
@@ -123,7 +128,7 @@ shift-register LUTs. Only the 1-bit valid and tag lines are reset.
 
 The controller knows nothing about skew. It issues two kinds of beats:
 
-* **shift beat**: one step of the accumulator chains. It drains one row of the
+* **shift beat**: one step of the shift chains. It drains one row of the
   tile that was just computed and preloads one row of the next tile.
 * **operand beat**: one column of A and one row of B.
 

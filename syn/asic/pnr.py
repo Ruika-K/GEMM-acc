@@ -55,7 +55,7 @@ RESULTS = HERE / "pnr_results.csv"
 PDK_ROOT = os.environ.get("PDK_ROOT", str(Path.home() / "pdk" / "sky130"))
 
 # Pins on the side their data comes from or goes to, as in the array:
-# A enters from the west, B from the north, the accumulator chain runs south to
+# A enters from the west, B from the north, the shift chain runs south to
 # north.
 ARRAY_PINS = ("a_i[*] left:* a_valid_i[*] left:* shift_i left:* "
               "b_i[*] top:* c_o[*] top:* c_valid_o[*] top:* c_i[*] bottom:*")

@@ -43,7 +43,7 @@ module gemm_pe #(
     input  logic                     shift_i,
     output logic                     shift_o,
 
-    // Accumulator chain, south -> north
+    // Shift chain, south -> north: drains results and preloads D
     input  logic signed [ACC_W-1:0]  c_i,
     output logic signed [ACC_W-1:0]  c_o
 );
