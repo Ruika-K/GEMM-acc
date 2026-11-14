@@ -2,10 +2,20 @@
 // syn_array_harness: synthesis-only wrapper around an array.
 //
 // An array has thousands of port bits, far more than a device has pins. The
-// harness feeds every array input from one serial shift register and captures
+// harness feeds every array input from one serial register chain and captures
 // every array output into another, so the design has five pins and all array
 // paths are register to register. Harness paths are one LUT deep and never
 // limit the clock.
+//
+// The input chain is not a plain shift register. In a plain one, bit n + 1 is
+// bit n one cycle later, and so is the forwarding register of a PE that bit n
+// feeds: the two registers have the same input. Synthesis tools merge such
+// registers, and they did, in Yosys and in Vivado: most operand forwarding
+// registers of the systolic array disappeared into the harness, and PEs that
+// should only talk to their neighbours shared registers across the array.
+// Every chain bit is therefore XORed with a bit from the other half of the
+// chain, so that no register of the array has the same input as a register of
+// the harness.
 //
 //   BCAST = 0: gemm_array (systolic)      BCAST = 1: gemm_array_bcast (baseline)
 // -----------------------------------------------------------------------------
@@ -41,8 +51,10 @@ module syn_array_harness #(
     logic [COLS-1:0]             c_valid;
     logic [COLS-1:0][ACC_W-1:0]  c_out;
 
+    localparam int HALF = IN_W / 2;
+
     always_ff @(posedge clk) begin
-        in_q <= {in_q[IN_W-2:0], si};
+        in_q <= {in_q[IN_W-2:0], si} ^ {in_q[HALF-1:0], in_q[IN_W-1:HALF]};
     end
 
     assign {c_in, shift, b, a, a_valid} = in_q;

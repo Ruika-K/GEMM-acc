@@ -31,7 +31,8 @@
 #
 # Output:
 #   syn/build/vivado/<job>/   timing and utilisation reports
-#   syn/vivado/results.csv    one line per job
+#   syn/vivado/results.csv    one line per job; the file of the previous run
+#                             is kept as results.prev.csv
 #
 # Fmax is reported as 1000 / (period - WNS). When WNS is positive this is a
 # lower bound: the tools stop optimising once the constraint is met. Designs
@@ -174,23 +175,13 @@ proc run_job {job} {
 file mkdir $BUILD
 set header "job,part,period_ns,wns_ns,fmax_mhz,lut,ff,srl,lutram,bram,dsp,dsp_mreg,dsp_preg"
 
-# Start a new results file if there is none or if an older run used other columns.
-set fresh 1
+# Every run starts a new results file; the previous one is kept next to it.
 if {[file exists $RESULTS]} {
-    set f [open $RESULTS r]
-    gets $f first
-    close $f
-    if {$first eq $header} {
-        set fresh 0
-    } else {
-        file rename -force $RESULTS [file join [file dirname $RESULTS] results.prev.csv]
-    }
+    file rename -force $RESULTS [file join [file dirname $RESULTS] results.prev.csv]
 }
-if {$fresh} {
-    set f [open $RESULTS w]
-    puts $f $header
-    close $f
-}
+set f [open $RESULTS w]
+puts $f $header
+close $f
 
 set summary {}
 foreach job $JOBS {

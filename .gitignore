@@ -14,4 +14,5 @@ vivado*.jou
 vivado*.log
 vivado*.str
 .Xil/
+syn/vivado/results.csv
 syn/vivado/results.prev.csv
