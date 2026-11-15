@@ -19,13 +19,14 @@
 // shift phase that overwrites the accumulators.
 //
 // The PE is the forwarding registers and the control alignment; the multiply-
-// accumulate datapath itself is gemm_mac.
+// accumulate datapath itself is gemm_mac, or gemm_mac_cs with MUL_CS = 1.
 // -----------------------------------------------------------------------------
 module gemm_pe #(
     parameter int DATA_W  = 8,   // operand width (signed)
     parameter int ACC_W   = 32,  // accumulator width (signed)
     parameter int PE_PIPE = 1,   // 1: register between multiplier and adder
     parameter int ACC_SEG = 0,   // accumulator carry segments, see gemm_mac
+    parameter int MUL_CS  = 0,   // 1: multiplier without a final adder, see gemm_mac_cs
     localparam int NSEG    = (ACC_SEG != 0) ? (ACC_W + ACC_SEG - 1) / ACC_SEG : 1,
     localparam int CHAIN_W = ACC_W + NSEG - 1
 ) (
@@ -90,19 +91,38 @@ module gemm_pe #(
     // ------------------------------------------------------------------
     // Multiply-accumulate
     // ------------------------------------------------------------------
-    gemm_mac #(
-        .DATA_W (DATA_W),
-        .ACC_W  (ACC_W),
-        .PE_PIPE(PE_PIPE),
-        .ACC_SEG(ACC_SEG)
-    ) u_mac (
-        .clk        (clk),
-        .a_i        (a_i),
-        .b_i        (b_i),
-        .mac_valid_i(mac_valid),
-        .acc_shift_i(acc_shift),
-        .c_i        (c_i),
-        .c_o        (c_o)
-    );
+    generate
+        if (MUL_CS != 0) begin : g_mul_cs
+            gemm_mac_cs #(
+                .DATA_W (DATA_W),
+                .ACC_W  (ACC_W),
+                .PE_PIPE(PE_PIPE),
+                .ACC_SEG(ACC_SEG)
+            ) u_mac (
+                .clk        (clk),
+                .a_i        (a_i),
+                .b_i        (b_i),
+                .mac_valid_i(mac_valid),
+                .acc_shift_i(acc_shift),
+                .c_i        (c_i),
+                .c_o        (c_o)
+            );
+        end else begin : g_mul
+            gemm_mac #(
+                .DATA_W (DATA_W),
+                .ACC_W  (ACC_W),
+                .PE_PIPE(PE_PIPE),
+                .ACC_SEG(ACC_SEG)
+            ) u_mac (
+                .clk        (clk),
+                .a_i        (a_i),
+                .b_i        (b_i),
+                .mac_valid_i(mac_valid),
+                .acc_shift_i(acc_shift),
+                .c_i        (c_i),
+                .c_o        (c_o)
+            );
+        end
+    endgenerate
 
 endmodule

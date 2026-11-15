@@ -13,7 +13,8 @@ RTL = ROOT / "rtl"
 TB = Path(__file__).resolve().parent
 SIM = "icarus"
 
-ARRAY_SOURCES = [RTL / "gemm_mac.sv", RTL / "gemm_cpa.sv", RTL / "gemm_pe.sv", RTL / "gemm_array.sv"]
+MAC_SOURCES = [RTL / "gemm_mac.sv", RTL / "gemm_mac_cs.sv", RTL / "gemm_cpa.sv"]
+ARRAY_SOURCES = MAC_SOURCES + [RTL / "gemm_pe.sv", RTL / "gemm_array.sv"]
 CORE_SOURCES = ARRAY_SOURCES + [
     RTL / "gemm_delay.sv",
     RTL / "gemm_fifo.sv",
@@ -49,6 +50,16 @@ ARRAY_CONFIGS = [
     (2, 3, 1, 4, 8),
     (1, 1, 1, 8, 8),
     (2, 2, 1, 32, 16),   # one segment: same as the plain adder
+]
+
+# Multiplier without a final adder (MUL_CS = 1): rows, cols, pe_pipe, acc_seg
+ARRAY_MULCS_CONFIGS = [
+    (4, 4, 1, 4),
+    (8, 8, 1, 4),
+    (4, 4, 1, 0),    # plain adder after the compressor
+    (3, 5, 1, 1),
+    (5, 2, 0, 8),
+    (1, 1, 1, 2),
 ]
 
 CORE_CONFIGS = [
@@ -124,6 +135,26 @@ def simulate(top, sources, test_module, parameters):
     )
 
 
+MAC_CONFIGS = [
+    # module, pe_pipe, acc_seg
+    ("gemm_mac", 1, 0),
+    ("gemm_mac", 0, 1),
+    ("gemm_mac", 1, 8),
+    ("gemm_mac_cs", 1, 0),
+    ("gemm_mac_cs", 1, 1),
+    ("gemm_mac_cs", 1, 4),
+    ("gemm_mac_cs", 0, 8),
+    ("gemm_mac_cs", 1, 12),
+]
+
+
+@pytest.mark.parametrize("module,pipe,acc_seg", MAC_CONFIGS)
+def test_gemm_mac(module, pipe, acc_seg):
+    """Every operand pair through the datapath, with and without saved carries."""
+    simulate(module, MAC_SOURCES, "test_gemm_mac",
+             {"PE_PIPE": pipe, "ACC_SEG": acc_seg})
+
+
 @pytest.mark.parametrize("rows,cols,pipe,acc_seg,cpa_seg", ARRAY_CONFIGS)
 def test_gemm_array(rows, cols, pipe, acc_seg, cpa_seg):
     simulate(
@@ -134,8 +165,19 @@ def test_gemm_array(rows, cols, pipe, acc_seg, cpa_seg):
     )
 
 
-def core_params(rows, cols, pipe, depth, cs):
-    return {"ROWS": rows, "COLS": cols, "PE_PIPE": pipe, "OUT_DEPTH": depth, "ACC_SEG": cs}
+@pytest.mark.parametrize("rows,cols,pipe,acc_seg", ARRAY_MULCS_CONFIGS)
+def test_gemm_array_mul_cs(rows, cols, pipe, acc_seg):
+    simulate(
+        "gemm_array",
+        ARRAY_SOURCES,
+        "test_gemm_array",
+        {"ROWS": rows, "COLS": cols, "PE_PIPE": pipe, "ACC_SEG": acc_seg, "MUL_CS": 1},
+    )
+
+
+def core_params(rows, cols, pipe, depth, cs, mul_cs=0):
+    return {"ROWS": rows, "COLS": cols, "PE_PIPE": pipe, "OUT_DEPTH": depth, "ACC_SEG": cs,
+            "MUL_CS": mul_cs}
 
 
 @pytest.mark.parametrize("rows,cols,pipe,depth", CORE_CONFIGS)
@@ -148,9 +190,15 @@ def test_gemm_core_carry_save(rows, cols, pipe, depth, seg):
     simulate("gemm_core", CORE_SOURCES, "test_gemm_core", core_params(rows, cols, pipe, depth, seg))
 
 
-def top_params(rows, cols, pipe, depth, split, cs):
+@pytest.mark.parametrize("rows,cols,pipe,depth,seg", [(4, 4, 1, 4, 4), (3, 5, 0, 2, 1)])
+def test_gemm_core_mul_cs(rows, cols, pipe, depth, seg):
+    simulate("gemm_core", CORE_SOURCES, "test_gemm_core",
+             core_params(rows, cols, pipe, depth, seg, 1))
+
+
+def top_params(rows, cols, pipe, depth, split, cs, mul_cs=0):
     return {"ROWS": rows, "COLS": cols, "PE_PIPE": pipe, "OUT_DEPTH": depth,
-            "MEM_SPLIT": split, "ACC_SEG": cs}
+            "MEM_SPLIT": split, "ACC_SEG": cs, "MUL_CS": mul_cs}
 
 
 @pytest.mark.parametrize("rows,cols,pipe,depth,split", TOP_CONFIGS)
@@ -163,12 +211,19 @@ def test_gemm_top_carry_save(rows, cols, pipe, depth, split, seg):
     simulate("gemm_top", TOP_SOURCES, "test_gemm_top", top_params(rows, cols, pipe, depth, split, seg))
 
 
-@pytest.mark.parametrize("rows,cols,pipe,cs", BCAST_CONFIGS)
-def test_gemm_array_bcast(rows, cols, pipe, cs):
+@pytest.mark.parametrize("rows,cols,pipe,depth,split,seg", [(4, 4, 1, 4, 0, 4), (8, 8, 1, 8, 0, 4)])
+def test_gemm_top_mul_cs(rows, cols, pipe, depth, split, seg):
+    simulate("gemm_top", TOP_SOURCES, "test_gemm_top",
+             top_params(rows, cols, pipe, depth, split, seg, 1))
+
+
+@pytest.mark.parametrize("rows,cols,pipe,cs,mul_cs", [c + (0,) for c in BCAST_CONFIGS]
+                         + [(4, 4, 1, 4, 1), (3, 5, 0, 1, 1)])
+def test_gemm_array_bcast(rows, cols, pipe, cs, mul_cs):
     """Baseline used only for the synthesis comparison."""
     simulate(
         "gemm_array_bcast",
-        [RTL / "gemm_mac.sv", RTL / "gemm_cpa.sv", ROOT / "syn" / "common" / "gemm_array_bcast.sv"],
+        MAC_SOURCES + [ROOT / "syn" / "common" / "gemm_array_bcast.sv"],
         "test_gemm_array_bcast",
-        {"ROWS": rows, "COLS": cols, "PE_PIPE": pipe, "ACC_SEG": cs},
+        {"ROWS": rows, "COLS": cols, "PE_PIPE": pipe, "ACC_SEG": cs, "MUL_CS": mul_cs},
     )

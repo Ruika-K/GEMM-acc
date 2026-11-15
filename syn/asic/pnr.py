@@ -28,8 +28,8 @@ which the typical corner almost reaches. Place and route optimises all three
 corners at once and has to close the slow one, where 5 ns is out of reach by a
 factor of two. PERIOD is a target the slow corner misses by 10 - 20 %, so the
 numbers are what the tools reach when pushed, not what they were asked for.
-The variant with saved carries is faster and gets a shorter period, PERIOD_S8,
-chosen the same way.
+The faster variants get shorter periods, PERIOD_S8 and PERIOD_M4, chosen the
+same way.
 
 Two columns are sanity checks on the timing repair step, which was seen to
 insert long buffer chains (see pnr.tcl): "crit_path_bufs" counts the buffers on
@@ -68,6 +68,7 @@ BCAST_PINS = ARRAY_PINS.replace("a_valid_i[*]", "a_valid_i").replace("c_valid_o[
 
 PERIOD = 10.0     # ns, see above
 PERIOD_S8 = 7.0   # ns, for the variant with saved carries (_s8)
+PERIOD_M4 = 5.0   # ns, for the variant with the carry-save multiplier as well (_m4)
 
 FIELDS = ["job", "top", "placement", "routing", "util_target", "die_um2", "cell_um2", "util_pct", "period_ns",
           "fmax_tt_mhz", "fmax_ss_mhz", "fmax_ff_mhz", "crit_path_bufs", "buf_chain", "hold_slack_ns",
@@ -75,14 +76,15 @@ FIELDS = ["job", "top", "placement", "routing", "util_target", "die_um2", "cell_
 
 
 def jobs():
-    """Job table: the plain accumulator and the variant with a carry saved
-    every 8 bits (suffix _s8, see syn/asic/run.py).
+    """Job table: the plain datapath, the variant with a carry saved every 8
+    bits of the accumulator (suffix _s8) and the one that also has the
+    multiplier without a final adder (suffix _m4), see syn/asic/run.py.
 
-    The faster variant gets a shorter clock period, so that both are pushed
+    The faster a variant, the shorter its clock period, so that all are pushed
     equally hard.
     """
     out = {}
-    for sfx, period in (("", PERIOD), ("_s8", PERIOD_S8)):
+    for sfx, period in (("", PERIOD), ("_s8", PERIOD_S8), ("_m4", PERIOD_M4)):
         full = dict(util=50, period=period)
         out[f"pe{sfx}"] = dict(top="gemm_pe", pins=PE_PINS, **full)
         for n in (4, 8):

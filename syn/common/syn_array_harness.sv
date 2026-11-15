@@ -26,7 +26,8 @@ module syn_array_harness #(
     parameter int ROWS    = 8,
     parameter int COLS    = 8,
     parameter int PE_PIPE = 1,
-    parameter int ACC_SEG = 0
+    parameter int ACC_SEG = 0,
+    parameter int MUL_CS  = 0
 ) (
     input  logic clk,
     input  logic rst_n,
@@ -64,7 +65,7 @@ module syn_array_harness #(
             logic c_valid_all;
             gemm_array_bcast #(
                 .DATA_W(DATA_W), .ACC_W(ACC_W), .ROWS(ROWS), .COLS(COLS), .PE_PIPE(PE_PIPE),
-                .ACC_SEG(ACC_SEG)
+                .ACC_SEG(ACC_SEG), .MUL_CS(MUL_CS)
             ) u_array (
                 .clk      (clk),
                 .rst_n    (rst_n),
@@ -80,7 +81,7 @@ module syn_array_harness #(
         end else begin : g_systolic
             gemm_array #(
                 .DATA_W(DATA_W), .ACC_W(ACC_W), .ROWS(ROWS), .COLS(COLS), .PE_PIPE(PE_PIPE),
-                .ACC_SEG(ACC_SEG)
+                .ACC_SEG(ACC_SEG), .MUL_CS(MUL_CS)
             ) u_array (
                 .clk      (clk),
                 .rst_n    (rst_n),

@@ -13,7 +13,8 @@ Flow per job:
      slightly different implementation and makes the timing depend on the
      array size for no physical reason.)
      The multiply-accumulate datapath, gemm_mac, goes one step further: it is
-     synthesised once on its own (jobs mac, mac_nopipe, mac_ripple, mac_sN)
+     synthesised once on its own (jobs mac, mac_nopipe, mac_ripple, mac_sN,
+     mac_mN)
      and that netlist is put into every design that contains it; the same is
      done for the final adder of the saved-carry variants (job cpa). Technology mapping
      is not reproducible across designs: the same module mapped as part of
@@ -70,6 +71,7 @@ def rtl(*names):
 
 
 MAC = rtl("gemm_mac")
+MAC_CS = rtl("gemm_mac_cs")
 CPA = rtl("gemm_cpa")
 PE = rtl("gemm_mac", "gemm_pe")
 ARRAY = rtl("gemm_mac", "gemm_cpa", "gemm_pe", "gemm_array")
@@ -84,12 +86,15 @@ FIELDS = ["job", "top", "params", "period_ns", "area_um2", "kge", "cells", "flop
 
 
 SEGS = (1, 4, 8, 16)   # ACC_SEG values of the saved-carry variants
+MUL_SEGS = (1, 2, 4, 8)   # ACC_SEG values tried with the carry-save multiplier
 
 # Clock period the logic is mapped for. ABC stops improving a path once it
 # meets this, so the faster variants need a shorter target or everything
 # around the datapath settles at 5 ns.
 PERIOD = 5.0
 PERIOD_SEG = 4.0
+PERIOD_MUL = 3.0
+CPA_SEG_MUL = 16         # segment width of the final adders of those variants
 
 
 def jobs():
@@ -99,28 +104,41 @@ def jobs():
     uses: these modules are synthesised once, on their own.
 
     A suffix _sN marks the variant with a carry saved every N bits of the
-    accumulator (ACC_SEG = N; _s1 is the full carry-save accumulator).
+    accumulator (ACC_SEG = N; _s1 is the full carry-save accumulator), a
+    suffix _mN the same with the multiplier that has no final adder as well
+    (MUL_CS = 1).
     """
     out = {
         "mac": dict(top="gemm_mac", sources=MAC, params={"PE_PIPE": 1}),
         "mac_nopipe": dict(top="gemm_mac", sources=MAC, params={"PE_PIPE": 0}),
         # Ripple-carry accumulator adder, to show what the adder architecture is worth.
         "mac_ripple": dict(top="gemm_mac", sources=MAC, params={"PE_PIPE": 1}, adder="ripple"),
-        # The pipelined adder that adds the saved carries in at the array edge.
+        # The pipelined adder that adds the saved carries in at the array edge,
+        # and its faster form for the variants with the carry-save multiplier.
         "cpa": dict(top="gemm_cpa", sources=CPA, params={}),
+        "cpa_m": dict(top="gemm_cpa", sources=CPA, params={"SEG": CPA_SEG_MUL}, period=PERIOD_MUL),
     }
     for seg in SEGS:
         out[f"mac_s{seg}"] = dict(top="gemm_mac", sources=MAC, params={"ACC_SEG": seg},
                                   period=PERIOD_SEG)
+    # The datapath with the multiplier that has no final adder.
+    for seg in MUL_SEGS:
+        out[f"mac_m{seg}"] = dict(top="gemm_mac_cs", sources=MAC_CS, params={"ACC_SEG": seg},
+                                  period=PERIOD_MUL)
 
     def variants():
         yield "", {}, dict(hard={"gemm_mac": "mac"})
         for seg in SEGS:
             yield f"_s{seg}", {"ACC_SEG": seg}, dict(
                 hard={"gemm_mac": f"mac_s{seg}", "gemm_cpa": "cpa"}, period=PERIOD_SEG)
+        for seg in MUL_SEGS:
+            yield f"_m{seg}", {"ACC_SEG": seg, "MUL_CS": 1, "CPA_SEG": CPA_SEG_MUL}, dict(
+                hard={"gemm_mac_cs": f"mac_m{seg}", "gemm_cpa": "cpa_m"}, period=PERIOD_MUL,
+                extra_sources=MAC_CS)
 
     for sfx, extra, kw in variants():
-        out[f"pe{sfx}"] = dict(top="gemm_pe", sources=PE, params={"PE_PIPE": 1, **extra}, **kw)
+        pe_extra = {k: v for k, v in extra.items() if k != "CPA_SEG"}
+        out[f"pe{sfx}"] = dict(top="gemm_pe", sources=PE, params={"PE_PIPE": 1, **pe_extra}, **kw)
         for n in (4, 8, 16):
             size = {"ROWS": n, "COLS": n, **extra}
             out[f"sys_{n}{sfx}"] = dict(top="gemm_array", sources=ARRAY, params=size, **kw)
@@ -140,6 +158,7 @@ def jobs():
     for job in out.values():
         job.setdefault("period", PERIOD)
         job.setdefault("hard", {})
+        job["sources"] = job["sources"] + job.pop("extra_sources", [])
     return out
 
 

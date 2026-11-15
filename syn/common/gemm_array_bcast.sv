@@ -3,7 +3,8 @@
 //
 // Same arithmetic as gemm_array (one multiply-accumulate per PE, the same
 // optional product register, the same south -> north shift chain: every
-// PE is a gemm_mac, the datapath module gemm_pe is built around), but operands
+// PE is a gemm_mac or gemm_mac_cs, the datapath modules gemm_pe is built
+// around), but operands
 // and control are broadcast instead of forwarded from PE to PE:
 //
 //   * a_i[i] is registered once and drives all COLS multipliers of row i
@@ -20,6 +21,7 @@ module gemm_array_bcast #(
     parameter int COLS    = 8,
     parameter int PE_PIPE = 1,
     parameter int ACC_SEG = 0,
+    parameter int MUL_CS  = 0,
     parameter int CPA_SEG = 16
 ) (
     input  logic                        clk,
@@ -123,20 +125,37 @@ module gemm_array_bcast #(
 
         for (genvar i = 0; i < ROWS; i++) begin : g_row
             for (genvar j = 0; j < COLS; j++) begin : g_col
-                gemm_mac #(
-                    .DATA_W (DATA_W),
-                    .ACC_W  (ACC_W),
-                    .PE_PIPE(PE_PIPE),
-                    .ACC_SEG(ACC_SEG)
-                ) u_pe (
-                    .clk        (clk),
-                    .a_i        (a_q[i]),
-                    .b_i        (b_q[j]),
-                    .mac_valid_i(mac_valid),
-                    .acc_shift_i(acc_shift),
-                    .c_i        (acc[((i+1)*COLS + j)*CHAIN_W +: CHAIN_W]),
-                    .c_o        (acc[(i*COLS + j)*CHAIN_W +: CHAIN_W])
-                );
+                if (MUL_CS != 0) begin : g_mul_cs
+                    gemm_mac_cs #(
+                        .DATA_W (DATA_W),
+                        .ACC_W  (ACC_W),
+                        .PE_PIPE(PE_PIPE),
+                        .ACC_SEG(ACC_SEG)
+                    ) u_pe (
+                        .clk        (clk),
+                        .a_i        (a_q[i]),
+                        .b_i        (b_q[j]),
+                        .mac_valid_i(mac_valid),
+                        .acc_shift_i(acc_shift),
+                        .c_i        (acc[((i+1)*COLS + j)*CHAIN_W +: CHAIN_W]),
+                        .c_o        (acc[(i*COLS + j)*CHAIN_W +: CHAIN_W])
+                    );
+                end else begin : g_mul
+                    gemm_mac #(
+                        .DATA_W (DATA_W),
+                        .ACC_W  (ACC_W),
+                        .PE_PIPE(PE_PIPE),
+                        .ACC_SEG(ACC_SEG)
+                    ) u_pe (
+                        .clk        (clk),
+                        .a_i        (a_q[i]),
+                        .b_i        (b_q[j]),
+                        .mac_valid_i(mac_valid),
+                        .acc_shift_i(acc_shift),
+                        .c_i        (acc[((i+1)*COLS + j)*CHAIN_W +: CHAIN_W]),
+                        .c_o        (acc[(i*COLS + j)*CHAIN_W +: CHAIN_W])
+                    );
+                end
             end
         end
     endgenerate

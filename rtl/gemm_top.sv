@@ -26,6 +26,8 @@ module gemm_top #(
     parameter int COLS       = 8,
     parameter int PE_PIPE    = 1,
     parameter int ACC_SEG    = 0,      // accumulator carry segments, see gemm_mac
+    parameter int MUL_CS     = 0,      // 1: multiplier without a final adder, see gemm_mac_cs
+    parameter int CPA_SEG    = 16,     // ACC_SEG > 0: segment width of the final adders
     parameter int K_MAX      = 1024,
     parameter int OUT_DEPTH  = ROWS,
     parameter int A_DEPTH    = 1024,   // words of ROWS elements
@@ -265,6 +267,8 @@ module gemm_top #(
         .COLS     (COLS),
         .PE_PIPE  (PE_PIPE),
         .ACC_SEG  (ACC_SEG),
+        .MUL_CS   (MUL_CS),
+        .CPA_SEG  (CPA_SEG),
         .K_MAX    (K_MAX),
         .OUT_DEPTH(OUT_DEPTH)
     ) u_core (

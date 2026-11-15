@@ -29,6 +29,7 @@ module gemm_core #(
     parameter int COLS      = 8,
     parameter int PE_PIPE   = 1,
     parameter int ACC_SEG   = 0,      // accumulator carry segments, see gemm_mac
+    parameter int MUL_CS    = 0,      // 1: multiplier without a final adder, see gemm_mac_cs
     parameter int CPA_SEG   = 16,     // ACC_SEG > 0: segment width of the final adders
     parameter int K_MAX     = 1024,
     parameter int OUT_DEPTH = ROWS    // output FIFO depth in rows
@@ -175,6 +176,7 @@ module gemm_core #(
         .COLS   (COLS),
         .PE_PIPE(PE_PIPE),
         .ACC_SEG(ACC_SEG),
+        .MUL_CS (MUL_CS),
         .CPA_SEG(CPA_SEG)
     ) u_array (
         .clk      (clk),

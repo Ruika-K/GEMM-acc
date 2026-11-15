@@ -37,6 +37,7 @@ module gemm_array #(
     parameter int COLS    = 8,
     parameter int PE_PIPE = 1,
     parameter int ACC_SEG = 0,    // accumulator carry segments, see gemm_mac
+    parameter int MUL_CS  = 0,    // 1: multiplier without a final adder, see gemm_mac_cs
     parameter int CPA_SEG = 16    // ACC_SEG > 0: segment width of the final adders
 ) (
     input  logic                             clk,
@@ -120,7 +121,8 @@ module gemm_array #(
                     .DATA_W (DATA_W),
                     .ACC_W  (ACC_W),
                     .PE_PIPE(PE_PIPE),
-                    .ACC_SEG(ACC_SEG)
+                    .ACC_SEG(ACC_SEG),
+                    .MUL_CS (MUL_CS)
                 ) u_pe (
                     .clk      (clk),
                     .rst_n    (rst_n),
