@@ -7,8 +7,8 @@ is the main target, and an FPGA implementation used as a prototype.
 |------|-------|
 | ASIC, sky130, synthesis and pre-layout timing | done |
 | ASIC, sky130, place and route of the array | done up to 8 x 8; 16 x 16 to global routing |
-| FPGA, Lattice ECP5 (Yosys + nextpnr) | done (array comparison re-run with the corrected harness) |
-| FPGA, Xilinx (Vivado) | complete accelerator done; array comparison to be re-run with the corrected harness |
+| FPGA, Lattice ECP5 (Yosys + nextpnr) | done |
+| FPGA, Xilinx Zynq-7000 (Vivado) | done |
 
 The short version, 8 x 8 array on sky130, slow corner:
 
@@ -17,11 +17,18 @@ The short version, 8 x 8 array on sky130, slow corner:
 | Array, placed and routed | 89 MHz, 0.81 mm2 | **121 MHz**, 0.88 mm2 |
 | Complete accelerator, synthesis only, without memories | 86 MHz, 157 kGE | 102 MHz, 166 kGE |
 
-Systolic against broadcast, same datapath in both: on the ECP5, where routing
-dominates, the systolic array holds about 150 MHz from 4 x 4 to 12 x 12 while
-the broadcast array falls to 99 MHz. On the ASIC the two are equal until the
-accumulator adder is shortened; after that the systolic array is 5 % ahead at
-8 x 8 and the gap grows with the array.
+Systolic against broadcast, same datapath in both, three technologies:
+
+| | systolic | broadcast |
+|---|---|---|
+| ECP5, LUT multipliers, 4 x 4 -> 12 x 12 | about 150 MHz throughout | 138 -> 99 MHz |
+| Zynq-7000, 4 x 4 -> 16 x 16 | 164 -> 158 MHz | 156 -> 139 MHz |
+| sky130, routed, slow corner, 4 x 4 -> 8 x 8, plain accumulator | 90 -> 89 MHz | 90 -> 90 MHz |
+| sky130, routed, slow corner, 4 x 4 -> 8 x 8, `ACC_SEG = 8` | 122 -> 121 MHz | 118 -> 115 MHz |
+
+The more of the critical path is wire, the more the neighbour-only wiring is
+worth. On the FPGAs routing is over half of it; on the ASIC the difference
+only appears once the accumulator adder no longer hides it.
 
 # ASIC: SkyWater sky130, synthesis
 
@@ -337,7 +344,7 @@ both would have produced a wrong conclusion.
 
 Flow: `syn/vivado/run.tcl`, Vivado 2023.2, device xc7z020clg400-1,
 out-of-context synthesis and implementation at a 6 ns clock target. Numbers
-in `syn/vivado/results_xc7z020_1614cc2.csv`.
+in `syn/vivado/results_xc7z020.csv`.
 
 ## Complete accelerator, 8 x 8 array
 
@@ -367,30 +374,63 @@ Peak throughput: 64 multiply-accumulates per cycle = 10.4 GMAC/s.
   53 % of the delay in routing. All five worst paths end at a product
   register.
 * **Saved carries buy nothing here.** With `ACC_SEG = 8` the frequency is the
-  same and the design is 17 % larger in LUTs. The accumulator was never the
+  same and the design is 17 % larger in LUTs (the array alone: 19 %, and 33 %
+  for the full carry-save form). The accumulator was never the
   critical path on this device: the fabric has dedicated carry chains, and a
   32-bit addition on them is faster than a multiplier built from LUTs. The
   same change is worth 36 % on the ASIC, where the adder has to be built from
   gates. An optimisation of the arithmetic belongs to a technology, not to the
   RTL.
 
-## Arrays in the synthesis harness: to be re-run
+## Systolic array against the broadcast baseline
 
-The sweep also ran both arrays at 4 x 4 to 16 x 16 inside
-`syn/common/syn_array_harness.sv`. Those rows of the results file are not used
-here. The harness fed the array from a plain serial shift register, and in a
-shift register bit n + 1 is bit n one cycle later, which is exactly what the
-forwarding register of a PE is. Vivado merged the two: in the 8 x 8 job a PE
-keeps 5.5 of its 18 forwarding flip-flops on average, and the worst path of
-the "systolic" array runs from a register named after row 6 to a multiplier in
-row 3. The array that was measured is not the array in the RTL. Yosys did the
-same in the ECP5 flow.
+Both arrays inside `syn/common/syn_array_harness.sv`, LUT multipliers, one
+implementation run each:
 
-The complete accelerator is not affected (it does not use the harness), and
-neither is the ASIC flow (the arrays are synthesised on their own, with the
-PE hierarchy kept). The harness has been changed so that its registers can no
-longer be merged with the array's; the ECP5 numbers below are from the
-corrected harness, the Vivado array jobs have to be run again.
+| N | systolic (MHz) | broadcast (MHz) | LUTs, systolic / broadcast | Flip-flops, systolic / broadcast |
+|---|---------------:|----------------:|----------------------------|----------------------------------|
+| 4 | 164.2 | 156.0 | 1692 / 1695 | 1322 / 1273 |
+| 8 | 163.3 | 152.8 | 6420 / 6351 | 4724 / 4228 |
+| 12 | 162.2 | 142.1 | 14 450 / 14 104 | 10 263 / 8500 |
+| 16 | 157.8 | 138.8 | 25 431 / 24 808 | 17 877 / 14 469 |
+
+**The systolic array loses 4 % from 4 x 4 to 16 x 16, the baseline 11 %**, and
+the systolic array is 5 % ahead at 4 x 4 and 14 % ahead at 16 x 16.
+
+* Systolic, 8 x 8: the worst path starts at the forwarding register of the
+  neighbouring PE, on a net with 20 loads. Baseline: it starts at an edge
+  register, on a net with 128 loads spread over a column of the array, and
+  routing is 59 % of the path against 53 %. The logic is the same seven
+  levels in both.
+* The LUT counts are within 3 % of each other; the systolic array has 4 %
+  more flip-flops at 4 x 4 and 24 % more at 16 x 16.
+* The harness keeps the array intact: interior PEs have 17 of their 18
+  forwarding flip-flops (the shift control, which is the same in every row of
+  a column, is shared), PEs on the east and south edge lose the registers
+  that drive nothing.
+
+Variants of the 8 x 8 arrays:
+
+| Variant | systolic (MHz) | broadcast (MHz) | Note |
+|---------|---------------:|----------------:|------|
+| default | 163.3 | 152.8 | |
+| `PE_PIPE = 0` | 117.5 | 111.9 | the product register is worth 39 % |
+| DSP blocks forced, 3.5 ns target | 258.2 | 199.5 | 128 DSP blocks; with the logic this fast the wires decide, and the systolic array is 29 % ahead |
+| `ACC_SEG = 8` | 163.5 | 151.8 | 19 % more LUTs, no gain |
+| `ACC_SEG = 1` | 164.0 | | 33 % more LUTs, no gain |
+
+An earlier run of this sweep is not used. Its harness fed the array from a
+plain serial shift register, and in a shift register bit n + 1 is bit n one
+cycle later, which is exactly what the forwarding register of a PE is.
+Vivado merged the two: a PE kept 5.5 of its 18 forwarding flip-flops on
+average, the worst path of the "systolic" array ran from a register named
+after row 6 to a multiplier in row 3, and the two architectures came out
+equal at every size. Yosys did the same in the ECP5 flow. The harness now
+XORs every bit of its chain with a bit from the other half, so that none of
+its registers has the same input as a register of the array. The complete
+accelerator was never affected (it does not use the harness), and neither was
+the ASIC flow (the arrays are synthesised on their own, with the PE hierarchy
+kept).
 
 # FPGA prototype: Lattice ECP5
 
@@ -449,8 +489,8 @@ registering the request pulses) and the comparators of the tile iterators
 `syn/common/gemm_array_bcast.sv`: the same datapath per PE, but operands and
 control registered once at the edge and broadcast. Both sit in the same
 harness. An earlier version of this table showed no difference between the
-two; that was the register merging described in the Xilinx part, and those
-numbers are withdrawn.
+two; that was the register merging described at the end of the Xilinx part,
+and those numbers are withdrawn.
 
 Fmax in MHz, worst - best of three seeds:
 

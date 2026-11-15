@@ -127,15 +127,12 @@ PE. It is checked against numpy by `tb/test_gemm_array_bcast.py`.
 ### Vivado
 
 Status: the `standard` sweep (17 jobs) has been run with Vivado 2023.2 on
-xc7z020; the result is in `vivado/results_xc7z020_1614cc2.csv`. That run used
-the harness before it was corrected (see the header of
-`common/syn_array_harness.sv`), so only its `top_8` rows are used in the
-results document; the array jobs have to be run again. `run.tcl` writes
-`vivado/results.csv`, which is not tracked.
+xc7z020; the result is in `vivado/results_xc7z020.csv`. `run.tcl` itself
+writes `vivado/results.csv`, which is not tracked.
 
 The `_s8` and `_s1` jobs are there to see what saved carries do on an FPGA.
-The fabric has dedicated carry chains, so a 32-bit adder is cheap there and
-the gain seen on the ASIC is not expected to carry over.
+The fabric has dedicated carry chains, so a 32-bit adder is cheap there, and
+the gain seen on the ASIC does not carry over: same frequency, more LUTs.
 
 Vivado builds the 8 x 8 bit multipliers from LUTs by default, so the jobs are
 not limited by the number of DSP blocks. The `_dsp` jobs define `GEMM_USE_DSP`,

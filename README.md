@@ -36,8 +36,10 @@ OpenROAD):
 
 There are also FPGA prototypes: Lattice ECP5 with open tools (132 - 138 MHz
 for the complete accelerator) and Xilinx Zynq-7000 with Vivado (163 MHz). On
-the ECP5 the systolic array holds about 150 MHz from 4 x 4 to 12 x 12, where a
-broadcast array with the same datapath falls from 138 to 99 MHz.
+both, the systolic array keeps its frequency as it grows and a broadcast array
+with the same datapath does not: about 150 MHz against 138 -> 99 MHz on the
+ECP5 (4 x 4 to 12 x 12), 164 -> 158 MHz against 156 -> 139 MHz on the Zynq
+(4 x 4 to 16 x 16).
 
 ## Design in brief
 
