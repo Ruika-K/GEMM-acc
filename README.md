@@ -34,7 +34,10 @@ OpenROAD):
   the memories, 102 MHz at the slow corner before layout.
 * Gate-level simulation of the synthesised and of the routed netlists.
 
-There is also an FPGA prototype on a Lattice ECP5.
+There are also FPGA prototypes: Lattice ECP5 with open tools (132 - 138 MHz
+for the complete accelerator) and Xilinx Zynq-7000 with Vivado (163 MHz). On
+the ECP5 the systolic array holds about 150 MHz from 4 x 4 to 12 x 12, where a
+broadcast array with the same datapath falls from 138 to 99 MHz.
 
 ## Design in brief
 

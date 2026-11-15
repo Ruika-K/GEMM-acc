@@ -7,8 +7,8 @@ is the main target, and an FPGA implementation used as a prototype.
 |------|-------|
 | ASIC, sky130, synthesis and pre-layout timing | done |
 | ASIC, sky130, place and route of the array | done up to 8 x 8; 16 x 16 to global routing |
-| FPGA, Lattice ECP5 (Yosys + nextpnr) | done |
-| FPGA, Xilinx (Vivado) | three-job smoke test passed, full sweep pending |
+| FPGA, Lattice ECP5 (Yosys + nextpnr) | done (array comparison re-run with the corrected harness) |
+| FPGA, Xilinx (Vivado) | complete accelerator done; array comparison to be re-run with the corrected harness |
 
 The short version, 8 x 8 array on sky130, slow corner:
 
@@ -16,6 +16,12 @@ The short version, 8 x 8 array on sky130, slow corner:
 |---|---|---|
 | Array, placed and routed | 89 MHz, 0.81 mm2 | **121 MHz**, 0.88 mm2 |
 | Complete accelerator, synthesis only, without memories | 86 MHz, 157 kGE | 102 MHz, 166 kGE |
+
+Systolic against broadcast, same datapath in both: on the ECP5, where routing
+dominates, the systolic array holds about 150 MHz from 4 x 4 to 12 x 12 while
+the broadcast array falls to 99 MHz. On the ASIC the two are equal until the
+accumulator adder is shortened; after that the systolic array is 5 % ahead at
+8 x 8 and the gap grows with the array.
 
 # ASIC: SkyWater sky130, synthesis
 
@@ -327,16 +333,71 @@ both would have produced a wrong conclusion.
   that idles most of its control logic; it needs activity from simulation.
 * Clock gating. Most registers have an enable.
 
+# FPGA prototype: Xilinx Zynq-7000 (Vivado)
+
+Flow: `syn/vivado/run.tcl`, Vivado 2023.2, device xc7z020clg400-1,
+out-of-context synthesis and implementation at a 6 ns clock target. Numbers
+in `syn/vivado/results_xc7z020_1614cc2.csv`.
+
+## Complete accelerator, 8 x 8 array
+
+| | Plain accumulator | `ACC_SEG = 8` |
+|---|---|---|
+| Fmax | 162.7 MHz | 162.2 MHz |
+| LUTs | 7238 | 8448 |
+| of which shift-register LUTs | 218 | 230 |
+| of which LUT RAM (output FIFO) | 172 | 172 |
+| Flip-flops | 5641 | 6208 |
+| Block RAM tiles | 8 | 8 |
+| DSP blocks | 0 | 0 |
+
+Peak throughput: 64 multiply-accumulates per cycle = 10.4 GMAC/s.
+
+* **The multipliers are LUTs, not DSP blocks.** Vivado builds an 8 x 8 bit
+  multiplier from LUTs and carry chains by default. A whole PE is about 93
+  LUTs, and the array is 5979 of the 7238 LUTs. Forcing DSP blocks costs two per PE (128 for the
+  8 x 8 array, more than half of the device's 220), one for the multiplier and
+  one for the accumulator.
+* **The skew lines become shift-register LUTs.** The 30 delay lines take 218
+  SRLs and 756 flip-flops; on the ECP5, which has no such primitive, the same
+  lines are 2540 flip-flops. This is what leaving the reset off the data delay
+  lines was for.
+* **The critical path is the multiply stage**: forwarding register of the
+  neighbouring PE -> LUT multiplier -> product register, seven logic levels,
+  53 % of the delay in routing. All five worst paths end at a product
+  register.
+* **Saved carries buy nothing here.** With `ACC_SEG = 8` the frequency is the
+  same and the design is 17 % larger in LUTs. The accumulator was never the
+  critical path on this device: the fabric has dedicated carry chains, and a
+  32-bit addition on them is faster than a multiplier built from LUTs. The
+  same change is worth 36 % on the ASIC, where the adder has to be built from
+  gates. An optimisation of the arithmetic belongs to a technology, not to the
+  RTL.
+
+## Arrays in the synthesis harness: to be re-run
+
+The sweep also ran both arrays at 4 x 4 to 16 x 16 inside
+`syn/common/syn_array_harness.sv`. Those rows of the results file are not used
+here. The harness fed the array from a plain serial shift register, and in a
+shift register bit n + 1 is bit n one cycle later, which is exactly what the
+forwarding register of a PE is. Vivado merged the two: in the 8 x 8 job a PE
+keeps 5.5 of its 18 forwarding flip-flops on average, and the worst path of
+the "systolic" array runs from a register named after row 6 to a multiplier in
+row 3. The array that was measured is not the array in the RTL. Yosys did the
+same in the ECP5 flow.
+
+The complete accelerator is not affected (it does not use the harness), and
+neither is the ASIC flow (the arrays are synthesised on their own, with the
+PE hierarchy kept). The harness has been changed so that its registers can no
+longer be merged with the array's; the ECP5 numbers below are from the
+corrected harness, the Vivado array jobs have to be run again.
+
 # FPGA prototype: Lattice ECP5
 
-All numbers in this part come from `syn/ecp5/run.py` and are stored in
-`syn/ecp5/results.csv`. Device: LFE5UM-85F, speed grade 8, package CABGA756.
-Every job is placed and routed with three seeds; frequencies are given as
-worst - best seed. The numbers were measured before the PE datapath was moved
-into `gemm_mac`; this flow flattens the design, and a re-run of the two 2 x 2
-arrays afterwards gave the same resource counts and frequencies within the
-spread between seeds. The Vivado flow (`syn/vivado/run.tcl`) has only passed a
-three-job smoke test so far; Xilinx numbers will be added after the full sweep.
+All numbers in this part come from `syn/ecp5/run.py` (Yosys + nextpnr) and are
+stored in `syn/ecp5/results.csv`. Device: LFE5UM-85F, speed grade 8, package
+CABGA756. Every job is placed and routed with three seeds; frequencies are
+given as worst - best seed.
 
 ## Complete accelerator, 8 x 8 array
 
@@ -344,23 +405,23 @@ three-job smoke test so far; Xilinx numbers will be added after the full sweep.
 
 | Metric | Value |
 |--------|-------|
-| Fmax | 111 - 115 MHz |
-| LUT4 | 4124 (7450 logic cells including carry and wide muxes, 9 % of the device) |
-| Flip-flops | 8062 |
+| Fmax | 132 - 138 MHz |
+| LUT4 | 4164 |
+| Flip-flops | 8070 |
 | 18 x 18 multiplier blocks | 64 (one per PE) |
 | 18 kbit block RAM | 16 (A: 4, B: 4, bias: 8) |
 | Distributed RAM cells | 65 (output FIFO) |
 
-Throughput at the best seed (114.7 MHz), one multiply-accumulate counted as
+Throughput at the best seed (137.9 MHz), one multiply-accumulate counted as
 two operations:
 
-* peak: 64 MAC per cycle = 7.3 GMAC/s = 14.7 GOP/s
+* peak: 64 MAC per cycle = 8.8 GMAC/s = 17.7 GOP/s
 * measured on a 32 x 72 x 32 multiplication (16 full tiles, 1469 cycles in
-  simulation): 50.2 MAC per cycle = 5.8 GMAC/s = 11.5 GOP/s
+  simulation): 50.2 MAC per cycle = 6.9 GMAC/s = 13.8 GOP/s
 
 Where the flip-flops go (from a separate synthesis run that keeps the
-hierarchy; it totals 8359 because nothing is optimised across module
-boundaries):
+hierarchy; it totals more than the flat design because nothing is optimised
+across module boundaries):
 
 | Part | Flip-flops |
 |------|-----------:|
@@ -371,62 +432,64 @@ boundaries):
 | Everything else (registers, loader, sequencer, iterators, memories, controller) | about 700 |
 
 The delay lines are 60 % as large as the array itself. ECP5 has no
-shift-register LUT primitive, so every stage is a flip-flop here. On Xilinx
-devices the data lines are written to map onto SRLs; whether they do is one of
-the things the Vivado run has to show.
+shift-register LUT primitive, so every stage is a flip-flop here; on the Zynq
+the same lines are 218 SRLs and 756 flip-flops.
 
-The critical path of the complete design is not in the array. It runs from the
-tile iterator of the result serialiser through the row-end comparison to the
-read pointer of the output FIFO. An earlier critical path, from the AXI4-Lite
-write logic through the request checks into the sequencer, was removed by
-registering the request pulses.
+The critical path of the complete design is in the control logic, between
+the tile controller and the bias stream of the sequencer, and three quarters
+of it is routing. Two earlier critical paths are gone: one from the AXI4-Lite
+write logic through the request checks into the sequencer (removed by
+registering the request pulses) and the comparators of the tile iterators
+(replaced by flags, see the ASIC part); together they took the design from
+105 - 112 MHz to the present figure.
 
 ## Systolic array against the broadcast baseline
 
 `sys_N` is the `N x N` systolic array, `bcast_N` the baseline of
-`syn/common/gemm_array_bcast.sv`: the same multiplier, product register and
-accumulator per PE, but operands and control registered once at the edge and
-broadcast. Both sit in the same serial harness.
+`syn/common/gemm_array_bcast.sv`: the same datapath per PE, but operands and
+control registered once at the edge and broadcast. Both sit in the same
+harness. An earlier version of this table showed no difference between the
+two; that was the register merging described in the Xilinx part, and those
+numbers are withdrawn.
 
 Fmax in MHz, worst - best of three seeds:
 
-| N  | Multiplier | systolic  | broadcast |
-|----|------------|-----------|-----------|
-| 2  | block      | 181 - 183 | 173 - 180 |
-| 4  | block      | 139 - 156 | 157 - 159 |
-| 8  | block      | 107 - 122 | 125 - 130 |
-| 12 | block      |  84 - 93  |  90 - 111 |
-| 4  | LUT        | 142 - 143 | 139 - 141 |
-| 8  | LUT        | 116 - 122 | 118 - 120 |
-| 12 | LUT        |  99 - 104 |  97 - 108 |
+| N  | Multiplier | systolic  | broadcast | Flip-flops, systolic / broadcast |
+|----|------------|-----------|-----------|----------------------------------|
+| 2  | block      | 179 - 184 | 178 - 182 | 395 / 393 |
+| 4  | block      | 154 - 172 | 155 - 159 | 1309 / 1165 |
+| 8  | block      | 107 - 146 | 103 - 131 | 4697 / 3861 |
+| 12 | block      | 114 - 133 | 90 - 98   | 10 165 / 8093 |
+| 4  | LUT        | 145 - 159 | 136 - 140 | 1309 / 1165 |
+| 8  | LUT        | 146 - 152 | 114 - 120 | 4697 / 3861 |
+| 12 | LUT        | 143 - 148 | 99 - 100  | 10 165 / 8093 |
 
-**On this device and with this flow the systolic array is not faster than the
-baseline.** With block multipliers it is equal or slower; with LUT multipliers
-the two are indistinguishable. Both lose frequency as the array grows.
+**The systolic array keeps its frequency as it grows and the baseline does
+not.** With multipliers built from LUTs, where the placer is free to put a
+PE's logic together, the systolic array runs at about 150 MHz at 4 x 4, 8 x 8
+and 12 x 12; the baseline falls from 138 to 117 to 99 MHz, which leaves the
+systolic array 45 % ahead at 12 x 12. With multiplier blocks the two are equal
+up to 8 x 8 and 25 - 35 % apart at 12 x 12.
 
 What the timing reports show:
 
-* Routing is about 60 - 70 % of the critical paths of the 8 x 8 and 12 x 12
-  arrays, and the path is register -> multiplier -> product register.
-* ECP5 multiplier blocks exist only in a few fixed rows. A PE's registers and
-  its multiplier end up tens of tiles apart whichever way the operands arrive,
-  so the neighbour-only wiring of the systolic array buys nothing.
-* With LUT multipliers the PEs could be placed as a mesh, but the placer does
-  not do so: the critical net of the 12 x 12 systolic array connects two
-  neighbouring PEs that were placed 58 columns apart. Architectural locality
-  does not become physical locality by itself.
-* The seed-to-seed spread (about 20 % for the 12 x 12 baseline) is as large as
-  the differences between the two architectures.
+* 8 x 8, LUT multipliers. Systolic: the critical path starts at the
+  forwarding register of the neighbouring PE, and the net to the multiplier is
+  0.9 ns long, two tiles away. Baseline: the critical path starts at an edge
+  register, and the net to the multiplier is 3.6 ns long, from one side of the
+  array to the other. The logic on the two paths is the same 2.5 - 2.7 ns.
+* ECP5 multiplier blocks exist only in a few fixed rows, so with block
+  multipliers a PE's registers and its multiplier can be far apart whichever
+  way the operands arrive. That is why the two architectures stay together
+  for longer there, and why the spread between seeds is large (107 - 146 MHz
+  for the 8 x 8 systolic array).
+* Routing is 60 % or more of every critical path. This is the regime in
+  which neighbour-only wiring pays: on the ASIC the same comparison only
+  showed a difference once the logic of the accumulate stage had been
+  shortened.
 
-What this does and does not establish: up to 12 x 12, on ECP5, with an
-unguided open-source placer, broadcast fan-out of 12 is not the limiting
-factor. It says nothing yet about larger arrays, about devices with a dense
-grid of DSP blocks that have internal pipeline registers, or about a
-floorplanned placement.
-
-Area: the systolic array needs slightly more of everything (12 x 12: 8053
-against 7901 flip-flops, 5304 against 5009 LUT4), because every PE forwards its
-operands and control.
+The price is the forwarding registers: 12 % more flip-flops than the baseline
+at 4 x 4, 26 % at 12 x 12.
 
 ## Product register
 
@@ -434,14 +497,13 @@ operands and control.
 
 | `PE_PIPE` | Fmax (MHz) | Flip-flops |
 |-----------|------------|-----------:|
-| 0         | 77 - 84    | 2768 |
-| 1         | 107 - 122  | 3801 |
+| 0         | 73 - 100   | 3664 |
+| 1         | 107 - 146  | 4697 |
 
-The register between multiplier and adder raises Fmax by about 40 - 45 % for
-1033 flip-flops (about 16 per PE). Yosys does not pack it into the multiplier block's own
-output register, so on ECP5 it is built from fabric flip-flops and the path
-still leaves the block; a vendor flow that uses the block's internal registers
-should gain more.
+The register between multiplier and adder raises Fmax by about 45 % for 1033
+flip-flops (about 16 per PE). Yosys does not pack it into the multiplier
+block's own output register, so on ECP5 it is built from fabric flip-flops and
+the path still leaves the block.
 
 ## Reproducing
 

@@ -114,8 +114,8 @@ Two flows that implement the same jobs.
 | `*_sN`     | the same with a carry saved every N bits of the accumulator, `ACC_SEG = N` (Vivado flow only) |
 | `top_8`    | the complete accelerator with an 8 x 8 array |
 
-`common/syn_array_harness.sv` feeds all array inputs from a serial shift
-register and captures all outputs into another one. An array has far more port
+`common/syn_array_harness.sv` feeds all array inputs from a serial register
+chain and captures all outputs into another one. An array has far more port
 bits than a device has pins; with the harness every array path is register to
 register and the wrapper itself is one LUT deep.
 
@@ -126,10 +126,12 @@ PE. It is checked against numpy by `tb/test_gemm_array_bcast.py`.
 
 ### Vivado
 
-Status: the `quick` mode has been run with Vivado 2023.2 (three jobs, no
-errors). The script was changed afterwards (clock constraints, utilisation
-taken from the report, job list, the `_sN` jobs); the `standard` sweep has not
-been run yet.
+Status: the `standard` sweep (17 jobs) has been run with Vivado 2023.2 on
+xc7z020; the result is in `vivado/results_xc7z020_1614cc2.csv`. That run used
+the harness before it was corrected (see the header of
+`common/syn_array_harness.sv`), so only its `top_8` rows are used in the
+results document; the array jobs have to be run again. `run.tcl` writes
+`vivado/results.csv`, which is not tracked.
 
 The `_s8` and `_s1` jobs are there to see what saved carries do on an FPGA.
 The fabric has dedicated carry chains, so a 32-bit adder is cheap there and
@@ -153,7 +155,7 @@ vivado -mode batch -source syn/vivado/run.tcl -tclargs quick
 ```
 
 Everything is implemented out of context, so only register-to-register paths
-are timed. One line per job is appended to `syn/vivado/results.csv`; the timing
+are timed. One line per job is written to `syn/vivado/results.csv`; the timing
 and utilisation reports are in `syn/build/vivado/<job>/`.
 
 ### ECP5 (open source)
