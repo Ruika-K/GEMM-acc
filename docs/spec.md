@@ -53,6 +53,7 @@ Inside `gemm_core`:
 | Module           | Role |
 |------------------|------|
 | `gemm_mac`       | Multiply-accumulate datapath of a PE |
+| `gemm_mac_cs`    | The same without a carry-propagate adder in the multiplier (`MUL_CS = 1`) |
 | `gemm_pe`        | Processing element: forwarding registers around a `gemm_mac` |
 | `gemm_cpa`       | Pipelined adder at the north edge, only with `ACC_SEG > 0` |
 | `gemm_array`     | `ROWS x COLS` mesh of PEs, no skew logic |
@@ -129,6 +130,26 @@ carry-save accumulator. A preloaded addend enters with its carries at zero.
 Seen from outside the array this changes one thing: results appear
 `ceil(ACC_W / CPA_SEG)` cycles later (two with the defaults). The spacing
 rules of section 4 and the tile period are the same.
+
+**Multiplier without a final adder (`MUL_CS`).** A multiplier reduces its
+partial products to two rows and then adds the two rows; that addition is the
+other carry chain of the PE. With `MUL_CS = 1` the datapath is `gemm_mac_cs`,
+which stops at the two rows:
+
+```
+stage 1   partial products -> 3:2 compressor tree -> two rows     [register]
+stage 2   accumulator + two rows -> 3:2 compressor -> segmented add
+```
+
+The partial products are Baugh-Wooley, so every row in the tree is positive
+and the tree needs no sign extension; the constant that makes up for the
+inverted terms is split so that the rows add up to the product plus
+`2^(2*DATA_W-1)`, which fits in `2*DATA_W` bits. The top bit of the two rows
+is then rewritten in a way that gives two `ACC_W`-bit rows whose sum is the
+sign-extended product, without the sign of that sum being known. The second
+stage is the segmented addition described above, with one layer of full
+adders in front. Combined with `ACC_SEG > 0` a PE has no carry chain longer
+than `ACC_SEG` bits. Function and timing contract are those of `gemm_mac`.
 
 ### 2.3 Skew and de-skew
 
@@ -227,6 +248,7 @@ which gives one beat per cycle without an extra skid buffer.
 | `ACC_W`      | 32      | Accumulator width, signed (at most 32) |
 | `PE_PIPE`    | 1       | 1: register between multiplier and adder |
 | `ACC_SEG`    | 0       | 0: plain accumulator adder. n: save a carry every n bits (1: full carry-save) |
+| `MUL_CS`     | 0       | 1: multiplier without a final adder (`gemm_mac_cs`); meant to be used with `ACC_SEG > 0` |
 | `CPA_SEG`    | 16      | With `ACC_SEG > 0`: bits added per cycle by the final adders |
 | `K_MAX`      | 1024    | Largest K, sizes the K counter |
 | `OUT_DEPTH`  | `ROWS`  | Output FIFO depth in rows |
@@ -385,12 +407,12 @@ plain row-major order. `tb/gemm_host.py` contains the reference reordering
 4. **[done]** Implementation, results in [results.md](results.md): ASIC
    synthesis on sky130 for the complete accelerator, place and route and
    gate-level simulation for the array, FPGA prototypes on ECP5 and
-   Zynq-7000, and the saved-carry accumulator that came out of the timing
-   analysis.
+   Zynq-7000, and the saved-carry accumulator and the multiplier without a
+   final adder that came out of the timing analysis.
 5. **[planned]** Physical design beyond the array: SRAM macros for the
    operand memories, place and route of the complete accelerator, a hardened
    PE macro for arrays of 16 x 16 and larger, power from simulated activity,
-   clock gating. A multiplier that leaves its result in carry-save form.
+   clock gating.
 6. **[planned]** Extensions, in no fixed order: output requantisation (shift,
    saturate, ReLU), row-major result order through a band buffer, several
    elements per input beat, weight-stationary mode, overlapping drain with the

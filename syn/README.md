@@ -13,6 +13,7 @@ and analyses timing with OpenSTA at the typical (tt, 25 C, 1.80 V) and the slow
 | `mac`, `mac_nopipe`, `mac_ripple` | the multiply-accumulate datapath of a PE (`gemm_mac`) |
 | `cpa` | the pipelined adder for saved carries (`gemm_cpa`) |
 | `*_sN` | any of the jobs below with a carry saved every N bits of the accumulator (`ACC_SEG = N`, N = 1, 4, 8, 16), mapped for 4 ns instead of 5 ns |
+| `*_mN` | the same with the multiplier without a final adder as well (`MUL_CS = 1`, N = 1, 2, 4, 8), mapped for 3 ns; `mac_mN` and `cpa_m` are its datapath and final adder |
 | `pe`, `pe_nopipe` | one processing element |
 | `sys_N` | `N x N` systolic array |
 | `bcast_N` | `N x N` broadcast baseline |
@@ -73,6 +74,7 @@ edge, B on the north edge, the shift chain south to north). Results go to
 | `pe`, `sys_4`, `bcast_4`, `sys_8`, `bcast_8` | full: timing-driven placement, detailed routing, extracted parasitics |
 | `sys_8_est`, `bcast_8_est`, `sys_16_est`, `bcast_16_est` | reduced: placement for wire length, global routing, wire estimates |
 | the same names with `_s8` (`sys_8_s8`, `sys_8_s8_est`, ...) | the variant with a carry saved every 8 bits |
+| the same names with `_m4` | the variant with the carry-save multiplier and a carry saved every 4 bits |
 
 The 16 x 16 arrays are about 160 000 cells. Timing-driven placement and
 detailed routing of a block that size each take hours on a four-core machine,
@@ -84,7 +86,7 @@ Two things in this flow are there because of how OpenROAD (26Q3) behaves when
 it cannot close timing:
 
 * Place and route uses its own clock period (`PERIOD` in `pnr.py`, 10 ns; 7 ns
-  for the `_s8` variant), not the 5 ns of synthesis. Timing is repaired for all corners at once, and at the
+  for the `_s8` and 5 ns for the `_m4` variant), not the period of synthesis. Timing is repaired for all corners at once, and at the
   slow corner 5 ns is out of reach by a factor of two. 10 ns is missed by
   10 - 20 %, so the result is what the tools reach when pushed.
 * Setup repair runs with `-skip_buffering`. With buffer insertion enabled it
@@ -92,6 +94,10 @@ it cannot close timing:
   and after routing those chains were the critical path. `pnr.py` checks for
   this: `crit_path_bufs` is the number of buffers on the worst path and
   `buf_chain` the longest single-fanout buffer chain in the routed netlist.
+
+Hold is repaired before routing, on wire estimates, with a margin of 0.1 ns
+(`HOLD_MARGIN` in `pnr.py`). Without the margin two routed blocks missed hold
+by a few picoseconds.
 
 Gate-level simulation of a routed array (clock tree and hold buffers included):
 
@@ -111,7 +117,8 @@ Two flows that implement the same jobs.
 | `*_nopipe` | the same with `PE_PIPE = 0` |
 | `*_lut`    | the same with multipliers built from LUTs (ECP5 flow only) |
 | `*_dsp`    | the same with DSP blocks forced by `GEMM_USE_DSP` (Vivado flow only) |
-| `*_sN`     | the same with a carry saved every N bits of the accumulator, `ACC_SEG = N` (Vivado flow only) |
+| `*_sN`     | the same with a carry saved every N bits of the accumulator, `ACC_SEG = N` |
+| `*_mN`     | the same with the multiplier without a final adder as well, `MUL_CS = 1` |
 | `top_8`    | the complete accelerator with an 8 x 8 array |
 
 `common/syn_array_harness.sv` feeds all array inputs from a serial register
@@ -126,9 +133,10 @@ PE. It is checked against numpy by `tb/test_gemm_array_bcast.py`.
 
 ### Vivado
 
-Status: the `standard` sweep (17 jobs) has been run with Vivado 2023.2 on
-xc7z020; the result is in `vivado/results_xc7z020.csv`. `run.tcl` itself
-writes `vivado/results.csv`, which is not tracked.
+Status: a `standard` sweep of 17 jobs has been run with Vivado 2023.2 on
+xc7z020; the result is in `vivado/results_xc7z020.csv`. The two `_m4` jobs were
+added afterwards and have not been run with Vivado. `run.tcl` itself writes
+`vivado/results.csv`, which is not tracked.
 
 The `_s8` and `_s1` jobs are there to see what saved carries do on an FPGA.
 The fabric has dedicated carry chains, so a 32-bit adder is cheap there, and

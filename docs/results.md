@@ -12,10 +12,10 @@ is the main target, and an FPGA implementation used as a prototype.
 
 The short version, 8 x 8 array on sky130, slow corner:
 
-| | Plain accumulator | Carry saved every 8 bits (`ACC_SEG = 8`) |
-|---|---|---|
-| Array, placed and routed | 89 MHz, 0.81 mm2 | **121 MHz**, 0.88 mm2 |
-| Complete accelerator, synthesis only, without memories | 86 MHz, 157 kGE | 102 MHz, 166 kGE |
+| | Plain | Carry saved every 8 bits (`ACC_SEG = 8`) | No carry chain in the PE (`MUL_CS = 1`, `ACC_SEG = 4`) |
+|---|---|---|---|
+| Array, placed and routed | 89 MHz, 0.81 mm2 | 121 MHz, 0.88 mm2 | **198 MHz**, 1.01 mm2 |
+| Complete accelerator, synthesis only, without memories | 86 MHz, 157 kGE | 107 MHz, 166 kGE | 125 MHz, 184 kGE |
 
 Systolic against broadcast, same datapath in both, three technologies:
 
@@ -25,6 +25,7 @@ Systolic against broadcast, same datapath in both, three technologies:
 | Zynq-7000, 4 x 4 -> 16 x 16 | 164 -> 158 MHz | 156 -> 139 MHz |
 | sky130, routed, slow corner, 4 x 4 -> 8 x 8, plain accumulator | 90 -> 89 MHz | 90 -> 90 MHz |
 | sky130, routed, slow corner, 4 x 4 -> 8 x 8, `ACC_SEG = 8` | 122 -> 121 MHz | 118 -> 115 MHz |
+| sky130, routed, slow corner, 4 x 4 -> 8 x 8, `MUL_CS = 1` | 194 -> 198 MHz | 182 -> 165 MHz |
 
 The more of the critical path is wire, the more the neighbour-only wiring is
 worth. On the FPGAs routing is over half of it; on the ASIC the difference
@@ -37,7 +38,8 @@ to the `sky130_fd_sc_hd` standard-cell library, OpenSTA analyses timing.
 
 * Corners: typical (tt, 25 C, 1.80 V) and slow (ss, 100 C, 1.60 V).
 * Frequencies are for the worst register-to-register path. The logic is mapped
-  for a 5 ns clock, the variants with saved carries for 4 ns.
+  for a 5 ns clock, the variants with saved carries for 4 ns, those with the
+  carry-save multiplier for 3 ns.
 * **These are pre-layout numbers.** No wire delay, no clock tree, no hold
   fixing. The array has been placed and routed, see the next part; the
   complete accelerator has not.
@@ -51,12 +53,16 @@ to the `sky130_fd_sc_hd` standard-cell library, OpenSTA analyses timing.
 
 ## Complete accelerator, 8 x 8 array
 
-`gemm_top` without the memories, default parameters: **157 kGE** (591 000 um2
-of cells), 9747 flip-flops, **164 MHz typical, 86 MHz slow corner**. With
-`ACC_SEG = 8` (below): 166 kGE, 218 MHz typical, 102 MHz slow.
+`gemm_top` without the memories:
 
-Peak throughput is 64 multiply-accumulates per cycle: 5.5 GMAC/s at the slow
-corner (6.5 with `ACC_SEG = 8`).
+| | Area | Flip-flops | Fmax typical / slow |
+|---|---|---:|---|
+| default parameters | 157 kGE (590 000 um2) | 9747 | 164 / 86 MHz |
+| `ACC_SEG = 8` | 166 kGE | 10 607 | 227 / 107 MHz |
+| `MUL_CS = 1`, `ACC_SEG = 4` | 184 kGE | 12 371 | 257 / 125 MHz |
+
+The two options are explained below. Peak throughput is 64
+multiply-accumulates per cycle: 5.5, 6.8 and 8.0 GMAC/s at the slow corner.
 
 Where the area goes (default parameters; cells of each module type, not
 counting its submodules):
@@ -164,22 +170,75 @@ bit.
   tile period is unchanged.
 * **Frequency: + 39 %** before layout, for the array.
 
-For the complete accelerator the gain is smaller at the slow corner, 86 ->
-102 MHz, because the critical path is then in the control logic around the
-array (the sequencer and the tile controller, 9.1 - 9.6 ns against 8.5 ns for
-the array). Three such paths were already shortened on the way: counters that
-compared against a dimension register minus one now count down to zero, and
-the tile iterator keeps its "last tile" conditions as flags instead of
-recomputing them with comparators. That alone took the plain design from 80
-to 86 MHz at the slow corner.
+## A multiplier without a final adder
+
+With the accumulator out of the way the multiply stage is the critical path,
+and a multiplier ends in a carry-propagate adder too: the partial products
+are reduced to two rows by a tree of 3:2 compressors, and the two rows are
+added. `MUL_CS = 1` selects a datapath (`gemm_mac_cs`) that leaves that
+addition out. The two rows are registered as they are and merged with the
+accumulator by one more layer of full adders in the accumulate stage; what is
+left to add there is two rows again, and that goes through the segmented
+adder with saved carries. A PE then has no carry chain longer than `ACC_SEG`
+bits.
+
+The multiplier is written out for this: Baugh-Wooley partial products (the
+terms with exactly one sign bit inverted, a constant to make up for it), four
+levels of 3:2 compressors for 8 x 8 bits, and a correction of the top bit of
+the two rows that gives them the right sign extension without knowing the
+sign of their sum.
+
+8 x 8 systolic array:
+
+| `MUL_CS` | `ACC_SEG` | Flip-flops per PE | Datapath (um2) | Accumulate stage alone, slow (MHz) | Array (kGE) | Array, typical / slow (MHz) |
+|----------|-----------|------------------:|---------------:|-----------------------------------:|------------:|-----------------------------|
+| 0 | 0 | 66 | 5768 | 85 | 105.3 | 163 / 85 |
+| 0 | 8 | 69 | 5858 | 143 | 114.1 | 227 / 118 |
+| 1 | 8 | 80 | 6451 | 158 | 128.6 | 349 / 161 |
+| 1 | 4 | 84 | 6659 | 179 | 132.2 | 340 / 162 |
+| 1 | 2 | 92 | 6990 | 210 | 137.8 | 346 / 159 |
+| 1 | 1 | 108 | 7493 | 203 | 146.4 | 367 / 176 |
+
+* **The multiply stage drops from 8.5 to 5.9 ns** at the slow corner, and the
+  array from 118 to 162 MHz. Against the plain design that is 1.9 times the
+  frequency for 1.26 times the area.
+* **`ACC_SEG = 4` is used with it.** The accumulate stage has an extra layer
+  of full adders now, so 8-bit segments leave it level with the multiply
+  stage; 4-bit segments leave 10 % of margin.
+* **The final adders had to follow.** After routing, the critical path of the
+  systolic array was in the adders at the north edge, which added 16 bits per
+  cycle. They add 8 bits per cycle in this variant (`CPA_SEG = 8`), and
+  results leave the array four cycles after the shift instead of two.
+* **Cost per PE**: 18 more flip-flops than the plain PE (the second row of
+  the product, the saved carries) and 15 % more datapath area.
+
+## The control logic around the array
+
+Every time the array became faster, the complete accelerator stopped at a
+path outside it. Slow corner, before layout:
+
+| | Array | Complete accelerator | What limits the accelerator |
+|---|---|---|---|
+| plain, first version | 85 MHz | 80 MHz | tile iterator: comparators on the remaining counts |
+| plain | 85 MHz | 86 MHz | the array |
+| `ACC_SEG = 8` | 118 MHz | 107 MHz | tile controller |
+| `MUL_CS = 1`, `ACC_SEG = 4` | 162 MHz | 125 MHz | 16-bit counter of the loader |
+
+What was changed on the way: counters that compared against a dimension
+register minus one count down from the dimension to one; the tile iterator
+keeps its "last tile" conditions as flags, set when the counts change,
+instead of recomputing them with comparators; the logic is mapped for the
+clock the datapath can reach, since technology mapping stops improving a
+path once it meets the target. What is left are plain 16-bit down counters,
+which the mapper builds as ripple chains.
 
 ## Gate-level simulation
 
 `syn/asic/gls.py` runs the array testbench (`tb/test_gemm_array.py`, the one
 that checks the RTL) on the synthesised netlists with the functional sky130
-cell models. Passing: 4 x 4 and 8 x 8, plain and with `ACC_SEG = 8`; 4 x 4
-with `ACC_SEG = 1` and `16`; 8 x 8 without product register and with the
-ripple-carry adder.
+cell models. Passing: 4 x 4 and 8 x 8, plain, with `ACC_SEG = 8` and with
+`MUL_CS = 1`, `ACC_SEG = 4`; 4 x 4 with `ACC_SEG = 1` and `16`; 8 x 8 without
+product register and with the ripple-carry adder.
 
 Two things had to be handled that RTL simulation hides: inputs that change on
 the clock edge race the clock in a zero-delay netlist, so the netlist is
@@ -204,23 +263,37 @@ machine used:
   timing from the wire estimates of global routing. 8 x 8 (for calibration
   against the full flow) and 16 x 16.
 
-Frequencies are for the worst register-to-register path. The clock target is
-one the slow corner misses by 10 - 20 %: 10 ns for the plain accumulator, 7 ns
-with saved carries.
+Three variants of the datapath: plain, `ACC_SEG = 8`, and `MUL_CS = 1` with
+`ACC_SEG = 4`. Frequencies are for the worst register-to-register path. The
+clock target is one the slow corner misses: 10, 7 and 5 ns for the three
+variants. Hold is repaired with a margin of 0.1 ns.
 
 ## Full flow
 
-| Block | Die (um) | Cell area (um2) | Utilisation | Fmax typical / slow / fast (MHz) | Worst hold slack (ns) | Wire (mm) | DRC |
-|-------|----------|----------------:|------------:|----------------------------------|----------------------:|----------:|----:|
-| one PE | 122 x 122 | 7 420 | 63 % | 170 / 89 / 272 | 0.38 | 19.4 | 0 |
-| systolic 4 x 4 | 456 x 456 | 113 377 | 58 % | 171 / 90 / 273 | 0.22 | 290 | 0 |
-| broadcast 4 x 4 | 444 x 444 | 106 580 | 57 % | 171 / 90 / 273 | 0.28 | 291 | 0 |
-| systolic 8 x 8 | 900 x 900 | 446 979 | 57 % | 169 / 89 / 270 | 0.21 | 1144 | 0 |
-| broadcast 8 x 8 | 874 x 874 | 422 788 | 57 % | 170 / 90 / 272 | 0.28 | 1204 | 0 |
-| systolic 4 x 4, `ACC_SEG = 8` | 488 x 488 | 130 620 | 58 % | 228 / 122 / 357 | 0.20 | 316 | 0 |
-| broadcast 4 x 4, `ACC_SEG = 8` | 478 x 478 | 126 297 | 59 % | 222 / 118 / 351 | 0.20 | 320 | 0 |
-| systolic 8 x 8, `ACC_SEG = 8` | 937 x 937 | 495 710 | 58 % | **227 / 121 / 358** | 0.01 | 1275 | 0 |
-| broadcast 8 x 8, `ACC_SEG = 8` | 911 x 911 | 472 298 | 58 % | 219 / 115 / 343 | 0.01 | 1276 | 0 |
+| Block | Die (um) | Cell area (um2) | Fmax typical / slow / fast (MHz) | Worst hold slack (ns) | Wire (mm) | DRC |
+|-------|----------|----------------:|----------------------------------|----------------------:|----------:|----:|
+| **plain** | | | | | | |
+| systolic 4 x 4 | 456 x 456 | 113 377 | 171 / 90 / 273 | 0.22 | 290 | 0 |
+| broadcast 4 x 4 | 444 x 444 | 106 580 | 171 / 90 / 273 | 0.28 | 291 | 0 |
+| systolic 8 x 8 | 900 x 900 | 446 979 | 169 / 89 / 270 | 0.21 | 1144 | 0 |
+| broadcast 8 x 8 | 874 x 874 | 422 788 | 170 / 90 / 272 | 0.28 | 1204 | 0 |
+| **`ACC_SEG = 8`** | | | | | | |
+| systolic 4 x 4 | 488 x 488 | 130 620 | 228 / 122 / 357 | 0.20 | 315 | 0 |
+| broadcast 4 x 4 | 478 x 478 | 126 297 | 222 / 118 / 351 | 0.20 | 320 | 0 |
+| systolic 8 x 8 | 937 x 937 | 496 041 | 227 / 121 / 357 | 0.10 | 1283 | 0 |
+| broadcast 8 x 8 | 911 x 911 | 472 638 | 219 / 115 / 342 | 0.10 | 1277 | 0 |
+| **`MUL_CS = 1`, `ACC_SEG = 4`** | | | | | | |
+| systolic 4 x 4 | 531 x 531 | 158 658 | 392 / 194 / 633 | 0.11 | 379 | 0 |
+| broadcast 4 x 4 | 521 x 521 | 157 721 | 366 / 182 / 587 | 0.11 | 386 | 0 |
+| systolic 8 x 8 | 1007 x 1007 | 570 323 | **392 / 198 / 620** | 0.13 | 1469 | 0 |
+| broadcast 8 x 8 | 984 x 984 | 553 396 | 326 / 165 / 519 | 0.12 | 1556 | 0 |
+
+One plain PE on its own is 122 x 122 um.
+
+**The routed 8 x 8 systolic array, from the plain datapath to the one without
+carry chains: 169 / 89 MHz -> 227 / 121 MHz -> 392 / 198 MHz, on 0.81 -> 0.88
+-> 1.01 mm2.** That is 2.2 times the frequency at the slow corner for 1.25
+times the die area.
 
 Cell area includes the clock tree, the buffers and the cells that timing
 repair made larger, which is why it is above the synthesis figure. Routed
@@ -228,34 +301,35 @@ frequencies are above the pre-layout ones for the same reason: timing repair
 sizes up the cells on the critical path by more than the wires cost.
 
 All blocks are free of routing violations and meet hold at every corner. The
-plain arrays needed no hold buffers; with saved carries the 8 x 8 arrays did
-(83 in the systolic array, 153 in the baseline), since the wider shift chain
-adds flip-flop to flip-flop connections with no logic in between. The routed
-4 x 4 and 8 x 8 systolic arrays of both variants pass the array testbench in
-gate-level simulation (`syn/asic/gls.py --pnr`), with clock tree, buffers and
-resized cells in place. This DRC is the router's own; no sign-off DRC or LVS
-has been run.
+routed 4 x 4 and 8 x 8 systolic arrays of all three variants pass the array
+testbench in gate-level simulation (`syn/asic/gls.py --pnr`), with clock
+tree, buffers and resized cells in place. This DRC is the router's own; no
+sign-off DRC or LVS has been run.
 
-**Saved carries after routing, 8 x 8 systolic array: 169 / 89 MHz -> 227 / 121
-MHz (+ 34 % typical, + 36 % slow) for 8 % more die area (0.81 -> 0.88 mm2).**
+Hold needs more attention as the datapath gets faster and the shift chain
+wider. The plain arrays needed no hold buffers, the 8 x 8 systolic array with
+`ACC_SEG = 8` has 149, and the one with `MUL_CS = 1` has 754, and the worst hold slack is at the slow corner,
+not the fast one: the clock tree and its skew scale with the corner too. A
+first run of this variant without the margin missed hold on two blocks, by 2
+and 19 ps, after routing had moved the wire delays away from the estimates
+that hold repair had worked on.
 
 ## Reduced flow
 
-| Block | Die (um) | Fmax typical / slow / fast (MHz), plain | Fmax typical / slow / fast (MHz), `ACC_SEG = 8` |
-|-------|----------|------------------------------------------|--------------------------------------------------|
-| systolic 8 x 8 | 900 x 900 | 158 / 83 / 249 | 217 / 115 / 339 |
-| broadcast 8 x 8 | 874 x 874 | 157 / 83 / 248 | 195 / 103 / 305 |
-| systolic 16 x 16 | 1789 x 1789 | 156 / 82 / 248 | 215 / 114 / 339 |
-| broadcast 16 x 16 | 1733 x 1733 | 153 / 78 / 244 | 169 / 91 / 255 |
+Fmax typical / slow (MHz):
 
-(Die sizes are those of the plain variant.)
+| Block | Plain | `ACC_SEG = 8` | `MUL_CS = 1`, `ACC_SEG = 4` |
+|-------|-------|----------------|------------------------------|
+| systolic 8 x 8 | 158 / 83 | 217 / 115 | 369 / 183 |
+| broadcast 8 x 8 | 157 / 83 | 195 / 103 | 286 / 149 |
+| systolic 16 x 16 | 156 / 82 | 215 / 114 | 343 / 174 |
+| broadcast 16 x 16 | 153 / 78 | 170 / 91 | 241 / 129 |
 
-How far to trust this flow: at 8 x 8, where both flows were run, it is 5 - 7 %
-pessimistic for the systolic array. For the baseline with saved carries it is
-10 % pessimistic, so it overstates the gap between the two (10 % here against
-5 % in the full flow). The broadcast nets need buffering that follows timing,
-and this flow only buffers for electrical rules. The 16 x 16 baseline numbers
-are the softest in this document.
+How far to trust this flow: at 8 x 8, where both flows were run, it is 5 - 8 %
+pessimistic for the systolic array and 8 - 10 % for the baseline, so it
+overstates the gap between the two by a few per cent: the broadcast nets need
+buffering that follows timing, and this flow only buffers for electrical
+rules. The 16 x 16 baseline numbers are the softest in this document.
 
 ## Systolic against broadcast
 
@@ -263,12 +337,16 @@ Both arrays are built from the same datapath netlist; what differs is how
 operands and control reach the PEs. Slow-corner frequency of the baseline
 relative to the systolic array:
 
-| Size | Flow | Plain accumulator | `ACC_SEG = 8` |
-|------|------|-------------------|----------------|
-| 4 x 4 | full | equal | - 3 % |
-| 8 x 8 | full | equal (+ 1 %) | - 5 % |
-| 8 x 8 | reduced | equal | - 10 % |
-| 16 x 16 | reduced | - 5 % | - 20 % |
+| Size | Flow | Plain | `ACC_SEG = 8` | `MUL_CS = 1`, `ACC_SEG = 4` |
+|------|------|-------|----------------|------------------------------|
+| 4 x 4 | full | equal | - 3 % | - 6 % |
+| 8 x 8 | full | equal (+ 1 %) | - 5 % | - 17 % |
+| 8 x 8 | reduced | equal | - 10 % | - 19 % |
+| 16 x 16 | reduced | - 5 % | - 20 % | - 26 % |
+
+Read along a row, the table says: the shorter the logic in the PE, the more
+the broadcast wires cost. Read down a column: the larger the array, the more
+they cost.
 
 **With the plain accumulator the two are equally fast up to 8 x 8**, and the
 baseline is 5 - 6 % smaller.
@@ -284,26 +362,27 @@ baseline is 5 - 6 % smaller.
 * The baseline pays in wire and buffers instead: routed, it needs 5 % more
   wire at 8 x 8, and in the reduced flow several times as many buffers.
 
-**With saved carries the multiply stage is the critical path of both, and the
-baseline falls behind as the array grows.**
+**Once the carry chains are out of the PE, the multiply stage is the critical
+path of both, and the baseline falls behind as the array grows.**
 
-* Systolic: forwarding register of the neighbouring PE -> multiplier ->
-  product register. The path is the same in every PE of every array, and the
-  frequency is 122, 121 and (reduced flow) 114 MHz at 4 x 4, 8 x 8 and
-  16 x 16.
-* Baseline: edge register -> buffers and wire across the array -> multiplier
-  -> product register. The frequency is 118, 115 and (reduced flow) 91 MHz.
-* The baseline is still the smaller of the two, by 5 % at 8 x 8 (die and
-  cells), and uses the same amount of wire.
+* Systolic: forwarding register of the neighbouring PE -> partial products
+  and compressor tree -> row registers. The path is the same in every PE of
+  every array, and with `MUL_CS = 1` the routed frequency is 194 MHz at 4 x 4
+  and 198 MHz at 8 x 8.
+* Baseline: edge register -> buffers and wire across the array -> the same
+  logic. 182 MHz at 4 x 4, 165 MHz at 8 x 8.
+* The systolic array misses its 5 ns target by 1 % at 8 x 8, the baseline by
+  21 %. The baseline is the smaller of the two by 5 % in die area and 3 % in
+  cells, and needs 6 % more wire.
 
-So the neighbour-only wiring is worth 5 % in frequency at 8 x 8 for 5 % in
-area, and more at 16 x 16; by how much there is not settled, see the note on
-the reduced flow. The comparison only shows a difference at all once the
-pipeline is balanced. In the plain design the adder hid it.
+The comparison only shows a difference once the pipeline is balanced. In the
+plain design the adder hid it. The FPGA results below say the same thing from
+the other side: there routing is more than half of every path from the start,
+and the systolic array is ahead from the start.
 
-What the systolic array costs, all told: 6.6 % of the PE area for forwarding,
-the skew and de-skew lines around the array (9 % of the complete 8 x 8
-accelerator), and the skew itself: operands reach the last PE
+What the systolic array costs, all told: 6.6 % of the plain PE area for
+forwarding, the skew and de-skew lines around the array (9 % of the complete
+8 x 8 accelerator), and the skew itself: operands reach the last PE
 `ROWS + COLS - 2` cycles after the first.
 
 ## Two things the tools did
@@ -329,12 +408,12 @@ both would have produced a wrong conclusion.
 * Place and route of the complete accelerator; only the array has been done.
 * The full flow for 16 x 16. The practical way is hierarchical: harden one PE
   as a macro and tile it.
-* The remaining control paths of the complete accelerator, which now limit it
-  at the slow corner.
-* A final adder sized for the carries it actually gets: with `ACC_SEG = 8`
-  three of its 32 carry inputs can be non-zero.
-* A multiplier that leaves its result in carry-save form, which would shorten
-  the multiply stage the same way.
+* The control logic of the complete accelerator, which limits it to 125 MHz
+  at the slow corner before layout while the array reaches 162 MHz.
+* A final adder sized for the carries it actually gets: with `ACC_SEG = 4`
+  seven of its 32 carry inputs can be non-zero.
+* Booth recoding of the multiplier, which would halve the number of partial
+  product rows.
 * Sign-off checks: DRC and LVS with the foundry decks, IR drop, antenna.
 * Power: OpenSTA's default switching activity is not meaningful for a design
   that idles most of its control logic; it needs activity from simulation.
@@ -530,6 +609,25 @@ What the timing reports show:
 
 The price is the forwarding registers: 12 % more flip-flops than the baseline
 at 4 x 4, 26 % at 12 x 12.
+
+## The ASIC datapath options on this FPGA
+
+8 x 8 arrays, multipliers from LUTs, Fmax in MHz, worst - best of three seeds:
+
+| Datapath | systolic | broadcast | LUT4, systolic | Flip-flops, systolic |
+|----------|----------|-----------|---------------:|---------------------:|
+| plain | 146 - 152 | 114 - 120 | 21 807 | 4697 |
+| `ACC_SEG = 8` | 144 - 150 | 115 - 120 | 22 091 | 5427 |
+| `MUL_CS = 1`, `ACC_SEG = 4` | 171 - 194 | 124 - 144 | 23 880 | 6403 |
+
+* **Saved carries alone do nothing here**, as on the Zynq: the accumulator
+  sits on the fabric's carry chain and was never the critical path.
+* **The multiplier without a final adder is 17 - 28 % faster**, for 10 % more
+  LUTs and 36 % more flip-flops. This was not expected. The critical path of
+  the plain array is register -> multiplier -> product register with 2.5 ns
+  of logic; the compressor tree without the final adder has 1.5 ns, and the
+  critical path moves to the accumulate stage. Whether the same holds with
+  Vivado, which builds a tighter LUT multiplier, has not been measured.
 
 ## Product register
 
