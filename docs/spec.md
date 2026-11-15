@@ -382,13 +382,16 @@ plain row-major order. `tb/gemm_host.py` contains the reference reordering
 2. **[done]** Skew / de-skew lines, controller and output FIFO; run-time
    `m`, `n`, `k` per tile.
 3. **[done]** Tiling, operand memories, AXI4-Lite and AXI4-Stream interfaces.
-4. **[in progress]** Implementation, results in [results.md](results.md).
-   * ASIC, sky130: logic synthesis, pre-layout timing, place and route of
-     the array (plain and with saved carries) and gate-level simulation are
-     done; SRAM macros, place and
-     route of the complete accelerator, power and clock gating are not.
-   * FPGA prototype: ECP5 done; the Vivado sweep is still to be run.
-5. **[planned]** Extensions, in no fixed order: output requantisation (shift,
+4. **[done]** Implementation, results in [results.md](results.md): ASIC
+   synthesis on sky130 for the complete accelerator, place and route and
+   gate-level simulation for the array, FPGA prototypes on ECP5 and
+   Zynq-7000, and the saved-carry accumulator that came out of the timing
+   analysis.
+5. **[planned]** Physical design beyond the array: SRAM macros for the
+   operand memories, place and route of the complete accelerator, a hardened
+   PE macro for arrays of 16 x 16 and larger, power from simulated activity,
+   clock gating. A multiplier that leaves its result in carry-save form.
+6. **[planned]** Extensions, in no fixed order: output requantisation (shift,
    saturate, ReLU), row-major result order through a band buffer, several
    elements per input beat, weight-stationary mode, overlapping drain with the
    next compute phase, operand gating for unused rows, zero skipping.

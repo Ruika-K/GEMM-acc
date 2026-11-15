@@ -9,7 +9,7 @@ C[M x N] = A[M x K] * B[K x N] + bias[N]
 
 ## Status
 
-Work in progress. The RTL is functionally complete and verified in simulation:
+The RTL is functionally complete and verified in simulation:
 `gemm_top` takes matrices of run-time size over AXI4-Stream, stores them in
 on-chip memories, tiles them over the array and streams the result back, with
 AXI4-Lite registers for control.
