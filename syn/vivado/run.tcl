@@ -18,11 +18,13 @@
 #   *_dsp        the same with (* use_dsp = "yes" *) on the PE
 #   *_sM         the same with a carry saved every M bits of the accumulator
 #                (ACC_SEG = M; _s1 is a full carry-save accumulator)
+#   *_mM         the same with the multiplier without a final adder as well
+#                (MUL_CS = 1)
 #   top_8        the complete accelerator, 8 x 8 array
 #
 #   quick     sys_8, bcast_8, top_8
 #   standard  N = 4, 8, 12, 16, plus the 8 x 8 variants (_nopipe, _dsp, _s8,
-#             _s1), plus top_8 and top_8_s8
+#             _s1, _m4), plus top_8 and top_8_s8
 #   full      standard plus N = 24 (needs a larger part, e.g. xc7a200t)
 #
 # By default Vivado builds the 8 x 8 bit multipliers from LUTs, so the array
@@ -52,7 +54,8 @@ if {[llength $argv] > 3} { set PERIOD_DSP [lindex $argv 3] }
 
 set RTL_FILES   [lsort [glob [file join $ROOT rtl *.sv]]]
 set ARRAY_FILES [concat \
-    [list [file join $ROOT rtl gemm_mac.sv] [file join $ROOT rtl gemm_cpa.sv] \
+    [list [file join $ROOT rtl gemm_mac.sv] [file join $ROOT rtl gemm_mac_cs.sv] \
+          [file join $ROOT rtl gemm_cpa.sv] \
           [file join $ROOT rtl gemm_pe.sv] [file join $ROOT rtl gemm_array.sv]] \
     [lsort [glob [file join $ROOT syn common *.sv]]]]
 
@@ -62,7 +65,7 @@ set RESULTS [file join $ROOT syn vivado results.csv]
 # ------------------------------------------------------------------------------
 # Job list: name, top, clock port, sources, generics, defines, period
 # ------------------------------------------------------------------------------
-proc array_job {name bcast n pipe {dsp 0} {seg 0}} {
+proc array_job {name bcast n pipe {dsp 0} {seg 0} {mul 0}} {
     global ARRAY_FILES PERIOD PERIOD_DSP
     set defines {SYNTHESIS=1}
     set period  $PERIOD
@@ -71,7 +74,7 @@ proc array_job {name bcast n pipe {dsp 0} {seg 0}} {
         set period $PERIOD_DSP
     }
     return [list $name syn_array_harness clk $ARRAY_FILES \
-        [list BCAST=$bcast ROWS=$n COLS=$n PE_PIPE=$pipe ACC_SEG=$seg] $defines $period]
+        [list BCAST=$bcast ROWS=$n COLS=$n PE_PIPE=$pipe ACC_SEG=$seg MUL_CS=$mul] $defines $period]
 }
 
 set JOBS {}
@@ -93,6 +96,8 @@ if {$MODE ne "quick"} {
     lappend JOBS [array_job sys_8_s8       0 8 1 0 8]
     lappend JOBS [array_job bcast_8_s8     1 8 1 0 8]
     lappend JOBS [array_job sys_8_s1       0 8 1 0 1]
+    lappend JOBS [array_job sys_8_m4       0 8 1 0 4 1]
+    lappend JOBS [array_job bcast_8_m4     1 8 1 0 4 1]
 }
 lappend JOBS [list top_8 gemm_top aclk $RTL_FILES [list ROWS=8 COLS=8 PE_PIPE=1] \
     {SYNTHESIS=1} $PERIOD]

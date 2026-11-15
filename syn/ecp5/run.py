@@ -34,7 +34,7 @@ BUILD = ROOT / "syn" / "build" / "ecp5"
 RESULTS = Path(__file__).resolve().parent / "results.csv"
 
 RTL = sorted((ROOT / "rtl").glob("*.sv"))
-ARRAY_SRC = [ROOT / "rtl" / f for f in ("gemm_mac.sv", "gemm_cpa.sv", "gemm_pe.sv", "gemm_array.sv")] + sorted(
+ARRAY_SRC = [ROOT / "rtl" / f for f in ("gemm_mac.sv", "gemm_mac_cs.sv", "gemm_cpa.sv", "gemm_pe.sv", "gemm_array.sv")] + sorted(
     (ROOT / "syn" / "common").glob("*.sv")
 )
 
@@ -71,6 +71,16 @@ def jobs():
                 params={"BCAST": bcast, "ROWS": n, "COLS": n, "PE_PIPE": 1},
                 nodsp=True,
             )
+    # The ASIC-oriented datapath options, to see what they do on an FPGA:
+    # saved carries in the accumulator, and the multiplier without a final
+    # adder on top of that (it is LUTs in any case, there is no multiply
+    # operator left for a multiplier block).
+    for name, bcast in (("sys", 0), ("bcast", 1)):
+        base = {"BCAST": bcast, "ROWS": 8, "COLS": 8, "PE_PIPE": 1}
+        out[f"{name}_8_s8_lut"] = dict(top="syn_array_harness", sources=ARRAY_SRC,
+                                       params={**base, "ACC_SEG": 8}, nodsp=True)
+        out[f"{name}_8_m4"] = dict(top="syn_array_harness", sources=ARRAY_SRC,
+                                   params={**base, "ACC_SEG": 4, "MUL_CS": 1}, nodsp=True)
     out["top_8"] = dict(
         top="gemm_top",
         sources=RTL,
