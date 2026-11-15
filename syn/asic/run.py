@@ -94,7 +94,8 @@ MUL_SEGS = (1, 2, 4, 8)   # ACC_SEG values tried with the carry-save multiplier
 PERIOD = 5.0
 PERIOD_SEG = 4.0
 PERIOD_MUL = 3.0
-CPA_SEG_MUL = 16         # segment width of the final adders of those variants
+CPA_SEG_MUL = 8          # the final adders of those variants add 8 bits per cycle: with
+                         # 16 they were the critical path of the routed array
 
 
 def jobs():

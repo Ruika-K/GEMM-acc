@@ -69,6 +69,7 @@ BCAST_PINS = ARRAY_PINS.replace("a_valid_i[*]", "a_valid_i").replace("c_valid_o[
 PERIOD = 10.0     # ns, see above
 PERIOD_S8 = 7.0   # ns, for the variant with saved carries (_s8)
 PERIOD_M4 = 5.0   # ns, for the variant with the carry-save multiplier as well (_m4)
+HOLD_MARGIN = 0.1 # ns of hold slack that the repair before routing has to leave
 
 FIELDS = ["job", "top", "placement", "routing", "util_target", "die_um2", "cell_um2", "util_pct", "period_ns",
           "fmax_tt_mhz", "fmax_ss_mhz", "fmax_ff_mhz", "crit_path_bufs", "buf_chain", "hold_slack_ns",
@@ -134,12 +135,17 @@ def path_buffers(text):
 
 
 def longest_buffer_chain(netlist):
-    """Longest chain of buffers that each drive exactly one cell input."""
+    """Longest chain of buffers that each drive exactly one cell input.
+
+    Buffers inserted for hold are left out: a chain of those is a delay line
+    put there on purpose.
+    """
     drives = {}     # output net of a buffer -> its input net
     loads = {}      # net -> number of cell inputs on it
-    for m in re.finditer(r"^\s*(sky130_\w+)\s+\S+\s*\((.*?)\);", netlist, flags=re.M | re.S):
-        pins = dict(re.findall(r"\.(\w+)\(\s*(.*?)\s*\)", m.group(2), flags=re.S))
-        is_buf = re.search(r"__(buf|clkbuf|dlygate|dlymetal)", m.group(1)) and "X" in pins
+    for m in re.finditer(r"^\s*(sky130_\w+)\s+(\S+)\s*\((.*?)\);", netlist, flags=re.M | re.S):
+        pins = dict(re.findall(r"\.(\w+)\(\s*(.*?)\s*\)", m.group(3), flags=re.S))
+        is_buf = (re.search(r"__(buf|clkbuf|dlygate|dlymetal)", m.group(1)) and "X" in pins
+                  and not re.search(r"hold\d+$", m.group(2).rstrip()))
         for pin, net in pins.items():
             if pin not in ("X", "Y", "Q", "Q_N", "HI", "LO", "VPWR", "VGND", "VPB", "VNB"):
                 loads[net] = loads.get(net, 0) + 1
@@ -174,6 +180,7 @@ def run(name, job, threads=4):
                PNR_DENSITY=str(job.get("density", 0.6)),
                PNR_DROUTE="1" if job.get("droute", True) else "0",
                PNR_TIMING_PLACE="1" if job.get("timing_place", True) else "0",
+               PNR_HOLD_MARGIN=str(HOLD_MARGIN),
                PNR_PINS=job["pins"])
     t0 = time.time()
     with open(work / "pnr.log", "w") as f:

@@ -47,7 +47,7 @@ module gemm_array_gls #(
     parameter PE_PIPE = {pipe},
     parameter ACC_SEG = {seg},
     parameter MUL_CS  = {mul},
-    parameter CPA_SEG = 16
+    parameter CPA_SEG = {cpa}
 ) (
     input                    clk,
     input                    rst_n,
@@ -100,7 +100,8 @@ def main():
     build.mkdir(parents=True, exist_ok=True)
     wrapper = build / "gemm_array_gls.v"
     wrapper.write_text(WRAPPER.format(n=m.group(1), pipe=0 if m.group(2) else 1,
-                                      seg=m.group(5) or 0, mul=1 if m.group(4) == "m" else 0))
+                                      seg=m.group(5) or 0, mul=1 if m.group(4) == "m" else 0,
+                                      cpa=8 if m.group(4) == "m" else 16))
 
     runner = get_runner("icarus")
     runner.build(

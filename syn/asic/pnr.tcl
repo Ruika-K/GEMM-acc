@@ -10,6 +10,7 @@
 #   PNR_DENSITY   global placement density (0..1)
 #   PNR_DROUTE    1: detailed route and extract parasitics, 0: stop after
 #                 global route and use its wire estimates
+#   PNR_HOLD_MARGIN   slack in ns that hold repair has to leave
 #   PNR_TIMING_PLACE  1: timing-driven global placement, 0: wire-length-driven
 #                 only (much faster on large blocks; timing repair still runs)
 #   PNR_PINS      optional list of "pin-name-pattern region" pairs, e.g.
@@ -26,6 +27,7 @@ set util    $::env(PNR_UTIL)
 set density $::env(PNR_DENSITY)
 set droute  $::env(PNR_DROUTE)
 set timing_place $::env(PNR_TIMING_PLACE)
+set hold_margin  $::env(PNR_HOLD_MARGIN)
 
 set pdk  [file join $::env(PDK_ROOT) sky130A]
 set ref  [file join $pdk libs.ref sky130_fd_sc_hd]
@@ -149,7 +151,9 @@ estimate_parasitics -placement
 # and high-fanout nets has already been done by the timing-driven placement
 # and by repair_design.
 repair_timing -setup -skip_buffering
-repair_timing -hold
+# Hold is repaired with a margin: it is fixed here on wire estimates, and the
+# routed wires moved the worst paths by up to 30 ps.
+repair_timing -hold -hold_margin $hold_margin
 detailed_placement
 check_placement
 
