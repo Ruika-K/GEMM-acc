@@ -75,8 +75,8 @@ module gemm_load #(
     logic [AWI-1:0]   base_q;      // A: first word of the band; B: current k
     logic [AWI-1:0]   stride_q;    // K (1 for bias)
     logic [LWI-1:0]   lane_q;
-    logic [DIM_W-1:0] col_q;       // elements left in the stream row, minus one
-    logic [DIM_W-1:0] cols_q;      // stream row length, minus one
+    logic [DIM_W-1:0] col_q;       // elements left in the stream row
+    logic [DIM_W-1:0] cols_q;      // stream row length
     logic [DIM_W-1:0] rows_q;      // stream rows left
     logic             ovf_q;       // an out-of-range write was dropped
 
@@ -94,9 +94,9 @@ module gemm_load #(
     assign busy_o    = (target_q != T_NONE);
     assign s_ready_o = busy_o;
     assign beat      = s_valid_i && s_ready_o;
-    // A down counter: the row ends at zero, with no subtraction or compare
-    // against the row length in the way.
-    assign row_end   = (col_q == '0);
+    // A down counter from the row length to 1: no subtraction or comparison
+    // against the row length, neither while counting nor when it is loaded.
+    assign row_end   = (col_q == DIM_W'(1));
     assign lane_end  = (target_q == T_A) ? (lane_q == LWI'(ROWS - 1))
                                          : (lane_q == LWI'(COLS - 1));
     assign in_range  = (addr_q < depth) && !ovf_q;
@@ -124,20 +124,20 @@ module gemm_load #(
             if (start_a_i) begin
                 target_q <= T_A;
                 stride_q <= AWI'(k_i);
-                cols_q   <= k_i - 1'b1;
-                col_q    <= k_i - 1'b1;
+                cols_q   <= k_i;
+                col_q    <= k_i;
                 rows_q   <= m_i;
             end else if (start_b_i) begin
                 target_q <= T_B;
                 stride_q <= AWI'(k_i);
-                cols_q   <= n_i - 1'b1;
-                col_q    <= n_i - 1'b1;
+                cols_q   <= n_i;
+                col_q    <= n_i;
                 rows_q   <= k_i;
             end else if (start_bias_i) begin
                 target_q <= T_BIAS;
                 stride_q <= AWI'(1);
-                cols_q   <= n_i - 1'b1;
-                col_q    <= n_i - 1'b1;
+                cols_q   <= n_i;
+                col_q    <= n_i;
                 rows_q   <= DIM_W'(1);
             end
         end else if (beat) begin
