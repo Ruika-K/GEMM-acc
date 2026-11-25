@@ -82,6 +82,7 @@ module gemm_seq #(
         /* verilator lint_off PINCONNECTEMPTY */
         .tile_m_last_o(),
         .tile_n_last_o(),
+        .tile_n_last_n_o(),
         .col_last_o(),
         .last_o    ()
         /* verilator lint_on PINCONNECTEMPTY */
@@ -116,6 +117,7 @@ module gemm_seq #(
         .tile_n_o  (),
         .tile_m_last_o(),
         .tile_n_last_o(),
+        .tile_n_last_n_o(),
         .col_last_o(ab_it_col_last),
         .last_o    ()
         /* verilator lint_on PINCONNECTEMPTY */
@@ -197,6 +199,7 @@ module gemm_seq #(
         .tile_n_o  (),
         .tile_m_last_o(d_tile_m_last),
         .tile_n_last_o(),
+        .tile_n_last_n_o(),
         .col_last_o(d_it_col_last),
         .last_o    ()
         /* verilator lint_on PINCONNECTEMPTY */

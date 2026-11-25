@@ -30,6 +30,7 @@ module gemm_tile_iter #(
     output logic [$clog2(COLS+1)-1:0] tile_n_o,
     output logic [$clog2(ROWS+1)-1:0] tile_m_last_o,  // tile_m_o - 1
     output logic [$clog2(COLS+1)-1:0] tile_n_last_o,  // tile_n_o - 1
+    output logic [$clog2(COLS+1)-1:0] tile_n_last_n_o,  // tile_n_last_o after this cycle
     output logic                      col_last_o,  // last tile of its band
     output logic                      last_o       // last tile of the matrix
 );
@@ -97,6 +98,17 @@ module gemm_tile_iter #(
         col_last_first    <= (n_i <= DIM_W'(COLS));
         tile_n_first      <= size_n(n_i <= DIM_W'(COLS), n_i[NW-1:0]);
         tile_n_first_last <= size_n(n_i <= DIM_W'(COLS), n_i[NW-1:0]) - 1'b1;
+    end
+
+    // The value tile_n_last_q takes at the next edge, for a stream that keeps
+    // its own end-of-row flag as a register (gemm_out).
+    always_comb begin
+        tile_n_last_n_o = tile_n_last_q;
+        if (start_i) begin
+            tile_n_last_n_o = tile_n_first_last;
+        end else if (next_i && valid_o && !last_o) begin
+            tile_n_last_n_o = col_last_q ? tile_n_first_last : tile_n_next - 1'b1;
+        end
     end
 
     always_ff @(posedge clk) begin

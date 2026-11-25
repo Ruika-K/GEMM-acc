@@ -7,6 +7,7 @@ is the main target, and an FPGA implementation used as a prototype.
 |------|-------|
 | ASIC, sky130, synthesis and pre-layout timing | done |
 | ASIC, sky130, place and route of the array | done up to 16 x 16 (16 x 16 hierarchically, with the PE as a hard macro) |
+| ASIC, sky130, place and route of the complete chip | done: 8 x 8 array, SRAM macros, 9.7 mm2, 183 MHz at the slow corner |
 | FPGA, Lattice ECP5 (Yosys + nextpnr) | done |
 | FPGA, Xilinx Zynq-7000 (Vivado) | done |
 
@@ -59,9 +60,9 @@ to the `sky130_fd_sc_hd` standard-cell library, OpenSTA analyses timing.
 
 | | Area | Flip-flops | Fmax typical / slow |
 |---|---|---:|---|
-| default parameters | 165 kGE (620 600 um2) | 10 177 | 164 / 86 MHz |
-| `ACC_SEG = 8` | 173 kGE | 11 037 | 227 / 118 MHz |
-| `MUL_CS = 1`, `ACC_SEG = 4` | 193 kGE | 12 801 | 339 / 161 MHz |
+| default parameters | 168 kGE (628 600 um2) | 10 178 | 164 / 86 MHz |
+| `ACC_SEG = 8` | 173 kGE | 11 038 | 227 / 118 MHz |
+| `MUL_CS = 1`, `ACC_SEG = 4` | 193 kGE | 12 802 | 339 / 161 MHz |
 
 The two options are explained below. In all three the array is what limits
 the frequency now (see [the control logic](#the-control-logic-around-the-array)).
@@ -73,21 +74,21 @@ counting its submodules):
 
 | Module | Instances | Area (um2) | Share |
 |--------|----------:|-----------:|------:|
-| `gemm_mac` (PE datapath) | 64 | 369 280 | 59.5 % |
-| `gemm_fifo` (output FIFO) | 1 | 108 000 | 17.4 % |
-| `gemm_delay` (skew and de-skew) | 41 | 54 841 | 8.8 % |
-| `gemm_pe` (PE forwarding registers) | 64 | 27 066 | 4.4 % |
-| `gemm_core` (input register, glue) | 1 | 17 700 | 2.9 % |
-| `gemm_tile_iter` | 4 | 15 560 | 2.5 % |
+| `gemm_mac` (PE datapath) | 64 | 369 280 | 58.8 % |
+| `gemm_fifo` (output FIFO) | 1 | 116 000 | 18.5 % |
+| `gemm_delay` (skew and de-skew) | 41 | 54 841 | 8.7 % |
+| `gemm_pe` (PE forwarding registers) | 64 | 27 066 | 4.3 % |
+| `gemm_core` (input register, glue) | 1 | 17 700 | 2.8 % |
+| `gemm_tile_iter` | 4 | 15 600 | 2.5 % |
 | `gemm_csr` | 1 | 7 300 | 1.2 % |
 | `gemm_load` with its two `gemm_dcnt` counters | 1 | 9 310 | 1.5 % |
 | `gemm_seq` | 1 | 4 600 | 0.7 % |
-| `gemm_ctrl` | 1 | 4 270 | 0.7 % |
-| `gemm_out` | 1 | 2 520 | 0.4 % |
+| `gemm_ctrl` | 1 | 4 280 | 0.7 % |
+| `gemm_out` | 1 | 2 490 | 0.4 % |
 
 Three things stand out:
 
-* **The output FIFO is 17 % of the logic.** It holds 8 rows of 257 bits in
+* **The output FIFO is 18 % of the logic.** It holds 8 rows of 257 bits in
   flip-flops, and a copy of the oldest row in a register of its own (see
   below). `OUT_DEPTH` is a parameter and the design is correct for any
   depth from 1, so this is a direct area / throughput trade.
@@ -293,8 +294,9 @@ The pieces:
   the array and top-level tests never count beyond 256; `test_gemm_top` got
   rows of 300 and 260 elements as well.
 
-Cost: 5 % more area for the complete accelerator (620 600 against
-590 300 um2 with the plain datapath), half of it the FIFO head register.
+Cost: 6 % more area for the complete accelerator (628 600 against
+590 300 um2 with the plain datapath), about half of it the FIFO head
+register.
 Excluding 4-input OR cells from the mapping, tried as well, gave 2 % and was
 left out: that is within the run-to-run spread of the mapping.
 
@@ -607,17 +609,97 @@ both would have produced a wrong conclusion.
   showed up as the baseline being faster at 4 x 4. The datapath is now
   synthesised once (see above).
 
+# ASIC: SkyWater sky130, the complete chip
+
+Flow: `syn/asic/run.py chip_8_m4` (synthesis with the operand memories built
+from SRAM macros, `syn/asic/gemm_mem_sky130.sv`), `syn/asic/pnr.py
+pe_m4_macro chip_8_m4` (`pnr_top.tcl`, then the flat analysis of
+`sta_flat.tcl`), `syn/asic/gls.py chip_8_m4`. The complete accelerator with
+an 8 x 8 array, `MUL_CS = 1`, `ACC_SEG = 4`, default memory sizes.
+
+![The routed chip](chip_8_m4.svg)
+
+| | |
+|---|---|
+| Die | 2.79 x 3.49 mm = 9.72 mm2 |
+| Macros | 64 PEs (0.90 mm2); 16 OpenRAM SRAMs (3.80 mm2): 4 x 2 KB each for A and B, 8 x 1 KB for the bias |
+| Standard cells | 21 900, 0.41 mm2: skew and de-skew lines, final adders, output FIFO, control, AXI |
+| Fmax between registers, typical / slow / fast | **358 / 183 / 539 MHz** |
+| Paths into and out of the SRAMs, slow corner, 5 ns | met (worst slack +0.03 ns), with the SRAMs' own times from their models (see below) |
+| Hold between registers | met at every corner, worst +0.035 ns |
+| Routing violations | 0 (the router's own check) |
+| Power grid | every instance connected to VPWR and VGND |
+| Run time | 24 minutes, plus 2 for the PE macro |
+| Gate-level simulation | the routed netlist with the SRAM models passes all 14 top-level tests, with every register starting at 0 and again at 1; cycle counts equal to the RTL |
+
+**Routed, the chip runs at 183 MHz at the slow corner, above the 161 MHz of
+synthesis** (timing repair sizes up cells on the critical paths by more than
+the wires cost, as for the array alone). The array on its own reaches
+197 - 199 MHz. The difference is clock skew: the clock tree for the macros
+reaches 64 PEs and 32 SRAM clock pins spread over the chip, and on the
+critical path, from the forwarding register of one PE into the multiplier of
+the PE below it, the receiving PE gets its clock 0.55 ns before the sending
+one. The data part of that path is 4.6 ns, no longer than in the array alone
+(4.9 ns).
+
+Floorplan: the memories sit where their data goes. A (one operand per array
+row) is west of the array, with the macros of lanes 0 - 3 next to rows 0 - 3;
+B (one per column) is above the array, its read ports facing it; the bias
+memory, which feeds the preload at the south edge, is below. The standard
+cells end up where the picture shows them: the output path (final adders,
+de-skew lines, output FIFO) along the north edge of the array, the AXI
+interfaces and the loader near the pins on the west edge.
+
+What the chip needed beyond the array:
+
+* **A registered end-of-row in the output stream.** The first routed chip ran
+  at 157 MHz: deciding "last element of the row" in the output stream compared
+  a column counter with the tile width, and the result popped the output FIFO,
+  whose head is 257 flip-flops spread over a large area. The decision is now a
+  register worked out a cycle ahead (`gemm_out.sv`, with the next tile width
+  from `gemm_tile_iter`): 183 MHz.
+* **A register in front of each memory's write port.** The loader drives the
+  write ports of all three memories, which are in three corners of the chip;
+  the wire to the farthest took more than a cycle. Writes now take effect a
+  cycle later, which nothing notices (the memories are read only after loading
+  has finished and a run has been started).
+* **Wider gaps between the SRAMs** (81.6 um): with half of that, the read
+  buses of two macros facing the same gap overflowed global routing.
+
+The SRAM macros need some care, and what is reported for them is limited:
+
+* **Their timing models are not reliable.** The library has one corner
+  (typical, 25 C) for these macros, and the models disagree with themselves:
+  for an older macro of the same library, the slow-corner model is 10 %
+  slower than the typical one, and the typical one at 100 C 13 times slower.
+  The typical models are used at all three corners, and paths into and out of
+  the SRAMs are reported apart from the rest. Their slack is what is left for
+  the SRAM beyond what its model claims.
+* **Read data comes after the falling clock edge** in the models (the read
+  happens in the second half of the cycle), so the paths out of an SRAM have
+  half a cycle.
+* **Their input pins carry a maximum transition of 0.04 ns**, which no driver
+  at the end of a wire meets; with it, electrical repair stops at once. The
+  flow uses copies of the models without that limit.
+* **Their read output is not held**: the simulation model drives X from 1 ns
+  after the clock edge until the next read, and the design reuses the bias
+  word over several cycles. `gemm_mem_sky130.sv` holds it in a register. The
+  top-level tests run with the SRAM wrapper and the OpenRAM models as well
+  (`test_gemm_top_sram`), and fail without the hold register.
+
+Hold from the chip inputs is left open, as in the hierarchical flow
+(-1.6 ns at the slow corner): the inputs are constrained to the ideal clock
+edge, and the registers inside see the clock 2 - 3 ns later.
+
 ## Not done yet
 
-* SRAM macros for the operand memories, and timing of the paths through them.
-* Place and route of the complete accelerator; only the array has been done.
+* Timing of the SRAM macros from a characterisation that can be trusted.
+* Clock tree of the chip: 0.55 ns of skew between neighbouring PEs costs 8 %
+  against the array alone.
 * The broadcast baseline at 16 x 16 in a full or hierarchical flow; the
   systolic array has both.
-* Hold from the inputs of the array, which the hierarchical flow leaves to
-  integration with the surrounding logic.
-* Place and route of the complete accelerator with the restructured control
-  logic: before layout it is as fast as the array (161 / 162 MHz), whether it
-  stays so after routing is open.
+* Hold from the inputs of the array and of the chip, which the hierarchical
+  and the chip flow leave open (see there).
 * On the ECP5, a version of the control logic that is not larger than the
   old one: the restructured logic is 6 % larger and places worse there.
 * A final adder sized for the carries it actually gets: with `ACC_SEG = 4`

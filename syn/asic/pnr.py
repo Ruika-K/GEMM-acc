@@ -88,6 +88,11 @@ PERIOD = 10.0     # ns, see above
 PERIOD_S8 = 7.0   # ns, for the variant with saved carries (_s8)
 PERIOD_M4 = 5.0   # ns, for the variant with the carry-save multiplier as well (_m4)
 HOLD_MARGIN = 0.1 # ns of hold slack that the repair before routing has to leave
+# OpenRAM SRAM macros of the complete chip (see syn/asic/gemm_mem_sky130.sv).
+SRAM_REF = Path(PDK_ROOT) / "sky130A" / "libs.ref" / "sky130_sram_macros"
+SRAM_MACROS = ("sky130_sram_1kbyte_1rw1r_32x256_8", "sky130_sram_2kbyte_1rw1r_32x512_8")
+SRAM_LIBS = [SRAM_REF / "lib" / f"{m}_TT_1p8V_25C.lib" for m in SRAM_MACROS]
+
 MACRO_IN = 0.3    # share of the period used before a macro input, see above
 MACRO_OUT = 0.7   # share of the period left after a macro output
 MACRO_HOLD = 0.3  # ns an output of a macro stays unchanged after the clock edge
@@ -98,7 +103,7 @@ CHANNEL_Y = 5.44  # um between macro rows (2 rows)
 
 FIELDS = ["job", "top", "placement", "routing", "util_target", "die_um2", "cell_um2", "util_pct", "period_ns",
           "fmax_tt_mhz", "fmax_ss_mhz", "fmax_ff_mhz", "crit_path_bufs", "buf_chain", "hold_slack_ns",
-          "skew_ns", "drc", "wire_um", "fmax_ss_model_mhz", "hold_in_ns", "runtime_s"]
+          "skew_ns", "drc", "wire_um", "fmax_ss_model_mhz", "hold_in_ns", "sram_slack_ss_ns", "runtime_s"]
 
 
 def jobs():
@@ -135,6 +140,9 @@ def jobs():
             out[f"sys_{n}{sfx}_hier"] = dict(top="gemm_array", design=f"sys_{n}{sfx}", util=50,
                                              period=period, hier=f"pe{sfx}_macro", rows=n, cols=n,
                                              pins=ARRAY_PINS)
+        # The complete chip: PE macros, SRAM macros, the rest in standard cells.
+        out[f"chip_8{sfx}"] = dict(top="gemm_top", design=f"chip_8{sfx}", util=50, period=period,
+                                   hier=f"pe{sfx}_macro", rows=8, cols=8, chip=True, pins="")
     return out
 
 
@@ -272,6 +280,8 @@ def dirs(name, job):
     src = BUILD / job.get("design", name)
     if job.get("macro"):
         return src, src / "macro"
+    if job.get("chip"):
+        return src, src / "pnr"
     if job.get("hier"):
         return src, src / "pnr_hier"
     return src, src / ("pnr_est" if name.endswith("_est") else "pnr")
@@ -312,6 +322,10 @@ def run(name, job, threads=4):
         env.update(PNR_MACRO_DIR=str(mdir), PNR_MACRO_CELL=mjob["top"],
                    PNR_ROWS=str(job["rows"]), PNR_COLS=str(job["cols"]),
                    PNR_CHANNEL_X=str(CHANNEL_X), PNR_CHANNEL_Y=str(CHANNEL_Y))
+        if job.get("chip"):
+            script = "pnr_top.tcl"
+            env.update(PNR_SRAM_LEFS=" ".join(str(SRAM_REF / "lef" / f"{m}.lef") for m in SRAM_MACROS),
+                       PNR_SRAM_LIBS=" ".join(str(f) for f in sram_libs(work)))
     else:
         env.update(PNR_DROUTE="1" if job.get("droute", True) else "0",
                    PNR_TIMING_PLACE="1" if job.get("timing_place", True) else "0")
@@ -338,9 +352,27 @@ def timing_models(job, work):
                            stdout=f, stderr=subprocess.STDOUT, env=env, check=True)
 
 
+def sram_libs(work):
+    """Timing models of the SRAM macros, with one limit taken out.
+
+    The OpenRAM models put a maximum transition of 0.04 ns on every input pin,
+    which no driver at the end of a wire meets; with it, electrical repair
+    gives up at once. These copies leave the inputs to the library default
+    (0.5 ns). Nothing else is changed.
+    """
+    out = []
+    for lib in SRAM_LIBS:
+        text = re.sub(r"^\s*max_transition\s*:\s*0\.04\s*;\s*\n", "", lib.read_text(), flags=re.M)
+        path = work / lib.name
+        path.write_text(text)
+        out.append(path)
+    return out
+
+
 def sta_flat(job, work, mdir, cell):
     """Flat timing analysis of a hierarchical job, see sta_flat.tcl."""
     env = dict(os.environ, PDK_ROOT=PDK_ROOT, STA_TOP=job["top"],
+               STA_EXTRA_LIBS=" ".join(str(work / f.name) for f in SRAM_LIBS) if job.get("chip") else "",
                STA_SDC=str(work / "constraints.sdc"),
                STA_TOP_V=str(work / f"{job['top']}.pnr.v"),
                STA_TOP_SPEF=str(work / f"{job['top']}.spef"),
@@ -384,6 +416,11 @@ def parse(name, job, runtime=None):
     hold = min(slack(section(timing, f"{hold_sec} {c}")) for c in ("tt", "ss", "ff"))
     hold_in = (f"{min(slack(section(timing, f'hold_in {c}')) for c in ('tt', 'ss', 'ff')):.3f}"
                if job.get("hier") else "")
+    # Chip: worst setup slack at the slow corner of the paths that start or end
+    # at an SRAM macro, with the macro's own times from its (typical) model.
+    sram = ""
+    if job.get("chip"):
+        sram = f"{min(slack(section(timing, f'setup_sram_{d} ss')) for d in ('out', 'in')):.3f}"
     area = re.search(r"Design area\s+([0-9.]+)\s+\S+\s+([0-9.]+)%", section(log, "area"))
     die = re.search(r"DIEAREA \( (\d+) (\d+) \) \( (\d+) (\d+) \)",
                     (work / f"{job['top']}.def").read_text())
@@ -415,6 +452,7 @@ def parse(name, job, runtime=None):
         wire_um=wire[-1] if wire else "",
         fmax_ss_model_mhz=model,
         hold_in_ns=hold_in,
+        sram_slack_ss_ns=sram,
         runtime_s="" if runtime is None else f"{runtime:.0f}",
     )
 

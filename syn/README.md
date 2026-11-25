@@ -114,6 +114,35 @@ python3 syn/asic/gls.py --pnr sys_4
 python3 syn/asic/gls.py --pnr sys_8_s8
 ```
 
+### The complete chip
+
+```bash
+python3 syn/asic/run.py chip_8_m4                     # synthesis with SRAM macros
+python3 syn/asic/pnr.py pe_m4_macro chip_8_m4         # place and route, flat timing
+python3 syn/asic/gls.py chip_8_m4                     # gate-level simulation, twice
+python3 syn/asic/floorplan_svg.py syn/build/asic/chip_8_m4/pnr/gemm_top.def out.svg <lef files>
+```
+
+Needs the `sky130_sram_macros` library next to `sky130_fd_sc_hd` in the PDK
+(from the same volare release: `sky130_sram_macros.tar.zst`).
+
+* `chip_8*` synthesis jobs build `gemm_top` with `asic/gemm_mem_sky130.sv` in
+  place of the memory black box: A and B from 2 KB macros
+  (`sky130_sram_2kbyte_1rw1r_32x512_8`), the bias from 1 KB macros, a
+  register in front of each write port and one that holds the read data.
+* `pnr_top.tcl` places the PE macros as `pnr_hier.tcl` does and the SRAMs
+  around them (A west, B north, bias south), then routes everything. The
+  timing models of the SRAMs have one corner, used for all three, and a
+  maximum input transition of 0.04 ns that the flow removes from its copies
+  (`sram_libs()` in `pnr.py`). `PNR_RESUME=1` starts again from the
+  database saved before routing.
+* `sta_flat.tcl` reports the paths through the SRAMs apart from those between
+  registers (`sram_slack_ss_ns` in `pnr_results.csv`).
+* `gls.py chip_8_m4` simulates the routed netlist with `tb/test_gemm_top.py`,
+  once with every register starting at 0 and once at 1: registers the RTL
+  does not reset start at X otherwise, and the netlist, unlike the RTL, keeps
+  an X that logic masks.
+
 ### Hierarchical flow
 
 For the 16 x 16 arrays the full flow runs hierarchically: the PE is placed,

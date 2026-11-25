@@ -79,6 +79,15 @@ CORE = ARRAY + rtl("gemm_delay", "gemm_fifo", "gemm_ctrl", "gemm_core")
 TOP = CORE + rtl("gemm_tile_iter", "gemm_dcnt", "gemm_load", "gemm_seq", "gemm_out", "gemm_csr", "gemm_top")
 BCAST = rtl("gemm_mac", "gemm_cpa") + [ROOT / "syn" / "common" / "gemm_array_bcast.sv"]
 MEM_BB = HERE / "gemm_mem_blackbox.sv"
+# The complete chip: operand memories from sky130 SRAM macros (OpenRAM).
+MEM_SRAM = [HERE / "gemm_mem_sky130.sv", HERE / "sky130_sram_blackbox.sv"]
+SRAM_LIB = Path(os.environ.get("PDK_ROOT", Path.home() / "pdk" / "sky130")) / \
+    "sky130A" / "libs.ref" / "sky130_sram_macros" / "lib"
+# The only characterised corner of these macros is typical, and the OpenRAM
+# models are not reliable even there (see docs/results.md); they are read for
+# every corner, and paths through the macros are reported apart.
+SRAM_LIBS = [SRAM_LIB / f"sky130_sram_{m}_TT_1p8V_25C.lib"
+             for m in ("1kbyte_1rw1r_32x256_8", "2kbyte_1rw1r_32x512_8")]
 
 FIELDS = ["job", "top", "params", "period_ns", "area_um2", "kge", "cells", "flops",
           "seq_area_pct", "r2r_tt_ns", "fmax_tt_mhz", "r2r_ss_ns", "fmax_ss_mhz",
@@ -148,6 +157,9 @@ def jobs():
         out[f"core_8{sfx}"] = dict(top="gemm_core", sources=CORE, params=size, abc="delay", **kw)
         out[f"top_8{sfx}"] = dict(top="gemm_top", sources=TOP + [MEM_BB], params=size,
                                   clock="aclk", abc="delay", **kw)
+        # The same with the SRAM macros, for place and route of the chip.
+        out[f"chip_8{sfx}"] = dict(top="gemm_top", sources=TOP + MEM_SRAM, params=size,
+                                   clock="aclk", abc="delay", libs=SRAM_LIBS, **kw)
 
     size = {"ROWS": 8, "COLS": 8}
     out["pe_nopipe"] = dict(top="gemm_pe", sources=PE, params={"PE_PIPE": 0},
@@ -319,9 +331,10 @@ set_output_delay {io} -clock clk [all_outputs]
 set_driving_cell -lib_cell {DRIVING_CELL} -pin Y $data_in
 set_load {LOAD_PF} [all_outputs]
 """)
+    extra = "".join(f"read_liberty {lib}\n" for lib in job.get("libs", []))
     (work / f"sta_{corner}.tcl").write_text(f"""
 read_liberty {CORNERS[corner]}
-read_verilog {work / 'netlist.v'}
+{extra}read_verilog {work / 'netlist.v'}
 link_design {job['top']}
 read_sdc {work / 'constraints.sdc'}
 puts "SECTION all paths"

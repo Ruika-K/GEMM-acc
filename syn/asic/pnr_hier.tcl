@@ -255,8 +255,7 @@ detailed_placement
 # ------------------------------------------------------------------------------
 stage "clock tree"
 # ------------------------------------------------------------------------------
-# Clock buffers go where there are rows, not on top of the macros.
-clock_tree_synthesis -root_buf sky130_fd_sc_hd__clkbuf_16 -obstruction_aware \
+clock_tree_synthesis -root_buf sky130_fd_sc_hd__clkbuf_16 \
     -buf_list {sky130_fd_sc_hd__clkbuf_8 sky130_fd_sc_hd__clkbuf_4 sky130_fd_sc_hd__clkbuf_2}
 set_propagated_clock [all_clocks]
 repair_clock_nets

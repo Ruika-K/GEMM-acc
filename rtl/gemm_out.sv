@@ -37,7 +37,7 @@ module gemm_out #(
     localparam int CIW = (COLS > 1) ? $clog2(COLS) : 1;
 
     logic          it_valid, it_last, it_next;
-    logic [NW-1:0] tile_n_last;
+    logic [NW-1:0] tile_n_last_n;
     logic [NW-1:0] col_q;
     logic          beat, row_end;
 
@@ -53,7 +53,8 @@ module gemm_out #(
         .tile_m_o     (),
         .tile_n_o     (),
         .tile_m_last_o(),
-        .tile_n_last_o(tile_n_last),
+        .tile_n_last_o(),
+        .tile_n_last_n_o(tile_n_last_n),
         .col_last_o   (),
         /* verilator lint_on PINCONNECTEMPTY */
         .last_o    (it_last)
@@ -64,7 +65,13 @@ module gemm_out #(
 
     assign m_valid_o = c_valid_i && it_valid;
     assign m_data_o  = AXIS_W'(elem);                 // sign extended
-    assign row_end   = (col_q == tile_n_last);
+    // "This beat is the last of its row" is a register, worked out from the
+    // next column and the next tile width. It decides the pop of the output
+    // FIFO, which fans out to the 257 bits of the FIFO head; compared here in
+    // the same cycle, it made the slowest path of the routed chip.
+    logic          row_end_q;
+    logic [NW-1:0] col_n;
+    assign row_end   = row_end_q;
     assign m_last_o  = it_last && c_last_i && row_end;
 
     assign beat      = m_valid_o && m_ready_i;
@@ -74,10 +81,20 @@ module gemm_out #(
     // after the host has seen TLAST.
     assign done_o    = beat && m_last_o;
 
+    always_comb begin
+        col_n = col_q;
+        if (start_i)   col_n = '0;
+        else if (beat) col_n = row_end ? '0 : col_q + 1'b1;
+    end
+
     always_ff @(posedge clk) begin
-        if (!rst_n)        col_q <= '0;
-        else if (start_i)  col_q <= '0;
-        else if (beat)     col_q <= row_end ? '0 : col_q + 1'b1;
+        if (!rst_n) begin
+            col_q     <= '0;
+            row_end_q <= 1'b0;
+        end else begin
+            col_q     <= col_n;
+            row_end_q <= (col_n == tile_n_last_n);
+        end
     end
 
 endmodule

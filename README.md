@@ -26,6 +26,12 @@ OpenROAD):
   checked with a flat timing analysis of every netlist and extracted wire.
   **198 MHz at the slow corner, the same as 8 x 8**, on 4.45 mm2, in five
   minutes. The price of hierarchy is 15 - 20 % die area.
+* The complete chip placed and routed: the 64 PE macros, 16 OpenRAM SRAM
+  macros for the operand memories and 22 000 standard cells on 9.7 mm2,
+  **183 MHz at the slow corner** (358 MHz typical) between registers, no
+  routing violations, gate-level simulation of the routed netlist with the
+  SRAM models. The SRAMs' own timing comes from models that cannot be
+  trusted, so the paths through them are reported apart.
 * The two steps that got it there from 89 MHz, both found by following the
   critical path. First the accumulator: it saves a carry every few bits
   instead of propagating it through 32 (`ACC_SEG`, 121 MHz). Then the

@@ -3,6 +3,7 @@
     pytest tb/ -v
 """
 
+import os
 from pathlib import Path
 
 import pytest
@@ -136,6 +137,27 @@ def simulate(top, sources, test_module, parameters):
     )
 
 
+# The complete design with the operand memories built from sky130 SRAM macros
+# (syn/asic/gemm_mem_sky130.sv and the OpenRAM simulation models), as it is
+# placed and routed. Needs the sky130_sram_macros library in the PDK.
+SRAM_MODELS = Path(os.environ.get("PDK_ROOT", Path.home() / "pdk" / "sky130")) / \
+    "sky130A" / "libs.ref" / "sky130_sram_macros" / "verilog"
+TOP_SRAM_SOURCES = [s for s in TOP_SOURCES if s.name != "gemm_mem.sv"] + [
+    ROOT / "syn" / "asic" / "gemm_mem_sky130.sv",
+    SRAM_MODELS / "sky130_sram_1kbyte_1rw1r_32x256_8.v",
+    SRAM_MODELS / "sky130_sram_2kbyte_1rw1r_32x512_8.v",
+]
+
+
+@pytest.mark.skipif(not SRAM_MODELS.exists(), reason="sky130_sram_macros not installed")
+@pytest.mark.parametrize("rows,cols,pipe,depth,seg,mul_cs", [(8, 8, 1, 8, 4, 1), (3, 5, 0, 3, 0, 0)])
+def test_gemm_top_sram(rows, cols, pipe, depth, seg, mul_cs):
+    params = top_params(rows, cols, pipe, depth, 0, seg, mul_cs)
+    if mul_cs:
+        params["CPA_SEG"] = 8     # the chip as placed and routed
+    simulate("gemm_top", TOP_SRAM_SOURCES, "test_gemm_top", params)
+
+
 @pytest.mark.parametrize("width", [16, 5])
 def test_gemm_dcnt(width):
     """The split down-counter of the loader, up to its largest value."""
@@ -220,8 +242,9 @@ def test_gemm_top_carry_save(rows, cols, pipe, depth, split, seg):
 
 @pytest.mark.parametrize("rows,cols,pipe,depth,split,seg", [(4, 4, 1, 4, 0, 4), (8, 8, 1, 8, 0, 4)])
 def test_gemm_top_mul_cs(rows, cols, pipe, depth, split, seg):
+    # CPA_SEG = 8 as synthesised and placed (syn/asic/run.py, CPA_SEG_MUL).
     simulate("gemm_top", TOP_SOURCES, "test_gemm_top",
-             top_params(rows, cols, pipe, depth, split, seg, 1))
+             {**top_params(rows, cols, pipe, depth, split, seg, 1), "CPA_SEG": 8})
 
 
 @pytest.mark.parametrize("rows,cols,pipe,cs,mul_cs", [c + (0,) for c in BCAST_CONFIGS]

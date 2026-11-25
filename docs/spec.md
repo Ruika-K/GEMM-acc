@@ -413,9 +413,9 @@ plain row-major order. `tb/gemm_host.py` contains the reference reordering
 5. **[in progress]** Physical design beyond the array. Done: the PE as a
    hard macro and hierarchical place and route of arrays up to 16 x 16; the
    control logic restructured so that the complete accelerator is as fast as
-   the array before layout. Planned: SRAM macros for the operand memories,
-   place and route of the complete accelerator, power from simulated
-   activity, clock gating.
+   the array before layout; the complete chip with SRAM macros placed and
+   routed. Planned: power from simulated activity, clock gating, a clock tree
+   with less skew between PEs.
 6. **[planned]** Extensions, in no fixed order: output requantisation (shift,
    saturate, ReLU), row-major result order through a band buffer, several
    elements per input beat, weight-stationary mode, overlapping drain with the
