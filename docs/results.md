@@ -16,7 +16,7 @@ The short version, 8 x 8 array on sky130, slow corner:
 |---|---|---|---|
 | Array, placed and routed | 89 MHz, 0.81 mm2 | 121 MHz, 0.88 mm2 | **198 MHz**, 1.01 mm2 |
 | 16 x 16 array, hierarchical place and route | 90 MHz, 3.67 mm2 | 121 MHz, 4.01 mm2 | **198 MHz**, 4.45 mm2 |
-| Complete accelerator, synthesis only, without memories | 86 MHz, 157 kGE | 107 MHz, 166 kGE | 125 MHz, 184 kGE |
+| Complete accelerator, synthesis only, without memories | 86 MHz, 165 kGE | 118 MHz, 173 kGE | 161 MHz, 193 kGE |
 
 Systolic against broadcast, same datapath in both, three technologies:
 
@@ -59,34 +59,37 @@ to the `sky130_fd_sc_hd` standard-cell library, OpenSTA analyses timing.
 
 | | Area | Flip-flops | Fmax typical / slow |
 |---|---|---:|---|
-| default parameters | 157 kGE (590 000 um2) | 9747 | 164 / 86 MHz |
-| `ACC_SEG = 8` | 166 kGE | 10 607 | 227 / 107 MHz |
-| `MUL_CS = 1`, `ACC_SEG = 4` | 184 kGE | 12 371 | 257 / 125 MHz |
+| default parameters | 165 kGE (620 600 um2) | 10 177 | 164 / 86 MHz |
+| `ACC_SEG = 8` | 173 kGE | 11 037 | 227 / 118 MHz |
+| `MUL_CS = 1`, `ACC_SEG = 4` | 193 kGE | 12 801 | 339 / 161 MHz |
 
-The two options are explained below. Peak throughput is 64
-multiply-accumulates per cycle: 5.5, 6.8 and 8.0 GMAC/s at the slow corner.
+The two options are explained below. In all three the array is what limits
+the frequency now (see [the control logic](#the-control-logic-around-the-array)).
+Peak throughput is 64 multiply-accumulates per cycle: 5.5, 7.6 and
+10.3 GMAC/s at the slow corner.
 
 Where the area goes (default parameters; cells of each module type, not
 counting its submodules):
 
 | Module | Instances | Area (um2) | Share |
 |--------|----------:|-----------:|------:|
-| `gemm_mac` (PE datapath) | 64 | 369 280 | 62.5 % |
-| `gemm_fifo` (output FIFO) | 1 | 92 200 | 15.6 % |
-| `gemm_delay` (skew and de-skew) | 41 | 54 500 | 9.2 % |
-| `gemm_pe` (PE forwarding registers) | 64 | 25 945 | 4.4 % |
-| `gemm_core` (input register, glue) | 1 | 14 900 | 2.5 % |
-| `gemm_tile_iter` | 4 | 8 640 | 1.5 % |
-| `gemm_load` | 1 | 7 180 | 1.2 % |
-| `gemm_csr` | 1 | 7 080 | 1.2 % |
-| `gemm_seq` | 1 | 4 550 | 0.8 % |
-| `gemm_ctrl` | 1 | 4 130 | 0.7 % |
-| `gemm_out` | 1 | 2 410 | 0.4 % |
+| `gemm_mac` (PE datapath) | 64 | 369 280 | 59.5 % |
+| `gemm_fifo` (output FIFO) | 1 | 108 000 | 17.4 % |
+| `gemm_delay` (skew and de-skew) | 41 | 54 841 | 8.8 % |
+| `gemm_pe` (PE forwarding registers) | 64 | 27 066 | 4.4 % |
+| `gemm_core` (input register, glue) | 1 | 17 700 | 2.9 % |
+| `gemm_tile_iter` | 4 | 15 560 | 2.5 % |
+| `gemm_csr` | 1 | 7 300 | 1.2 % |
+| `gemm_load` with its two `gemm_dcnt` counters | 1 | 9 310 | 1.5 % |
+| `gemm_seq` | 1 | 4 600 | 0.7 % |
+| `gemm_ctrl` | 1 | 4 270 | 0.7 % |
+| `gemm_out` | 1 | 2 520 | 0.4 % |
 
 Three things stand out:
 
-* **The output FIFO is 16 % of the logic.** It holds 8 rows of 257 bits in
-  flip-flops. `OUT_DEPTH` is a parameter and the design is correct for any
+* **The output FIFO is 17 % of the logic.** It holds 8 rows of 257 bits in
+  flip-flops, and a copy of the oldest row in a register of its own (see
+  below). `OUT_DEPTH` is a parameter and the design is correct for any
   depth from 1, so this is a direct area / throughput trade.
 * **The skew and de-skew lines are 9 %.** They are 2540 flip-flops, more than
   half as many as the array has, but the array's area is dominated by its
@@ -219,20 +222,90 @@ sign of their sum.
 Every time the array became faster, the complete accelerator stopped at a
 path outside it. Slow corner, before layout:
 
-| | Array | Complete accelerator | What limits the accelerator |
+| | Array | Complete accelerator | What limited the accelerator |
 |---|---|---|---|
 | plain, first version | 85 MHz | 80 MHz | tile iterator: comparators on the remaining counts |
 | plain | 85 MHz | 86 MHz | the array |
-| `ACC_SEG = 8` | 118 MHz | 107 MHz | tile controller |
-| `MUL_CS = 1`, `ACC_SEG = 4` | 162 MHz | 125 MHz | 16-bit counter of the loader |
+| `ACC_SEG = 8`, before | 118 MHz | 107 MHz | tile controller |
+| `MUL_CS = 1`, `ACC_SEG = 4`, before | 162 MHz | 125 MHz | 16-bit counter of the loader |
+| `ACC_SEG = 8`, now | 118 MHz | **118 MHz** | the array |
+| `MUL_CS = 1`, `ACC_SEG = 4`, now | 162 MHz | **161 MHz** | the array |
 
-What was changed on the way: counters that compared against a dimension
-register minus one count down from the dimension to one; the tile iterator
-keeps its "last tile" conditions as flags, set when the counts change,
-instead of recomputing them with comparators; the logic is mapped for the
-clock the datapath can reach, since technology mapping stops improving a
-path once it meets the target. What is left are plain 16-bit down counters,
-which the mapper builds as ripple chains.
+The 125 MHz were not one path but eleven groups of paths slower than the
+array: counters, comparators and handshakes in the loader, the output FIFO
+and output stream, the controller, the sequencer, the CSR block. Two causes,
+in about equal parts.
+
+**The technology mapping built ripple chains.** A 16-bit decrement took 6.5 ns
+at the slow corner as a chain of eight OR gates, although synthesis maps every
+adder as a Sklansky prefix tree. Yosys' default ABC script restructures for
+area before it maps for delay, and the area rewriting collapses the shared
+prefix tree into a chain. The control logic (jobs `core_8*`, `top_8*`) is now
+mapped with an ABC script that adds SOP balancing and delay-oriented
+resynthesis (`ABC_DELAY` in `syn/asic/run.py`): the loader alone went from
+7.6 to 6.1 ns, the accelerator from 125 to 138 MHz, for 2 % more area. The
+datapath is synthesised as before (it is in hard modules, see above).
+
+**Decisions were computed in the cycle that needed them.** "Is this the last
+row of the tile?" was a comparison of a counter with the tile size, which was
+itself selected from a remaining count; its result decided whether a tile
+iterator advanced, and the iterator's update logic was behind it; the
+handshake that started this came from another block. The changes all follow
+one rule: a decision used in a cycle is a register, worked out the cycle
+before, and a signal that arrives late (a handshake from another block) only
+chooses between values that are ready.
+
+| Step | `MUL_CS` accelerator |
+|------|----------------------|
+| start | 125 MHz |
+| delay-oriented mapping of the control logic | 138 MHz |
+| tile iterator: tile size and size - 1 as registers; output FIFO with a registered head | 121 MHz |
+| controller: beat decisions (`need_d`, `need_credit`, last row, last K, credit) as registered flags | 138 MHz |
+| tile iterator: the first tile of a matrix and of a band worked out from the dimensions a cycle ahead | 146 MHz |
+| loader: split down-counters (`gemm_dcnt`) instead of 16-bit decrements | 142 MHz |
+| ... restarting from registers that hold the count already split | 152 MHz |
+| sequencer: the bias iterator started without gating the start pulse | **161 MHz** |
+
+The third step made things worse, and it shows how these paths are built:
+the iterator then had more registers to switch when the handshake arrived,
+and the handshake of the bias stream still came out of the controller's
+comparators. Only with the controller's decisions registered did both
+changes pay.
+
+The pieces:
+
+* `gemm_tile_iter` keeps the size of the current tile and the size minus one
+  in registers, so a stream finds the end of a tile with a 4-bit equality,
+  and it works out the first tile of the matrix and of a band from `m_i` and
+  `n_i` one cycle ahead (the CSR block writes them in an earlier register
+  access and locks them while busy).
+* `gemm_fifo` has its oldest entry in a register and the next one selected
+  ahead of time, so a pop only chooses between them; `valid_o` is a register
+  too. Capacity and latency are unchanged. This is the largest addition: 257
+  flip-flops.
+* `gemm_ctrl` is written as next-state logic, and the decisions for the next
+  beat are computed from the next state.
+* `gemm_dcnt` is a down-counter for counts whose value nobody reads, only the
+  end (elements left in a row, rows left in a matrix): two halves with half
+  the borrow chain each, the high half kept as "high half - 1", flags for
+  "low half 0", "high half 0" and "value 1" computed one decrement ahead. It
+  has its own test (`tb/test_gemm_dcnt.py`) up to the largest value, because
+  the array and top-level tests never count beyond 256; `test_gemm_top` got
+  rows of 300 and 260 elements as well.
+
+Cost: 5 % more area for the complete accelerator (620 600 against
+590 300 um2 with the plain datapath), half of it the FIFO head register.
+Excluding 4-input OR cells from the mapping, tried as well, gave 2 % and was
+left out: that is within the run-to-run spread of the mapping.
+
+On the ECP5 the changes take the control logic off the critical path, which
+was between the controller and the bias stream there too, but the design
+does not get faster: the worst paths are now spread over the bias memory
+output, the skew lines and the CSR block, and with 6 % more LUTs the placement
+is worse on average. Over eight seeds: 112 - 141 MHz (median 127) against
+128 - 146 MHz (median 137) before. Cycle counts are unchanged (the same 1469
+cycles for the run measured below). The Zynq-7000 numbers below are for the
+previous RTL.
 
 ## Gate-level simulation
 
@@ -542,8 +615,11 @@ both would have produced a wrong conclusion.
   systolic array has both.
 * Hold from the inputs of the array, which the hierarchical flow leaves to
   integration with the surrounding logic.
-* The control logic of the complete accelerator, which limits it to 125 MHz
-  at the slow corner before layout while the array reaches 162 MHz.
+* Place and route of the complete accelerator with the restructured control
+  logic: before layout it is as fast as the array (161 / 162 MHz), whether it
+  stays so after routing is open.
+* On the ECP5, a version of the control logic that is not larger than the
+  old one: the restructured logic is 6 % larger and places worse there.
 * A final adder sized for the carries it actually gets: with `ACC_SEG = 4`
   seven of its 32 carry inputs can be non-zero.
 * Booth recoding of the multiplier, which would halve the number of partial
@@ -560,6 +636,9 @@ out-of-context synthesis and implementation at a 6 ns clock target. Numbers
 in `syn/vivado/results_xc7z020.csv`.
 
 ## Complete accelerator, 8 x 8 array
+
+These numbers are for the RTL before the control logic was restructured
+(see the ASIC part); Vivado has not been run on the present version.
 
 | | Plain accumulator | `ACC_SEG = 8` |
 |---|---|---|
@@ -658,19 +737,19 @@ given as worst - best seed.
 
 | Metric | Value |
 |--------|-------|
-| Fmax | 132 - 138 MHz |
-| LUT4 | 4164 |
-| Flip-flops | 8070 |
+| Fmax | 119 - 128 MHz (three seeds; eight seeds: 112 - 141) |
+| LUT4 | 4412 |
+| Flip-flops | 8379 |
 | 18 x 18 multiplier blocks | 64 (one per PE) |
 | 18 kbit block RAM | 16 (A: 4, B: 4, bias: 8) |
 | Distributed RAM cells | 65 (output FIFO) |
 
-Throughput at the best seed (137.9 MHz), one multiply-accumulate counted as
-two operations:
+Throughput at the best of the three seeds (128.1 MHz), one multiply-accumulate
+counted as two operations:
 
-* peak: 64 MAC per cycle = 8.8 GMAC/s = 17.7 GOP/s
+* peak: 64 MAC per cycle = 8.2 GMAC/s = 16.4 GOP/s
 * measured on a 32 x 72 x 32 multiplication (16 full tiles, 1469 cycles in
-  simulation): 50.2 MAC per cycle = 6.9 GMAC/s = 13.8 GOP/s
+  simulation): 50.2 MAC per cycle = 6.4 GMAC/s = 12.9 GOP/s
 
 Where the flip-flops go (from a separate synthesis run that keeps the
 hierarchy; it totals more than the flat design because nothing is optimised
@@ -688,9 +767,12 @@ The delay lines are 60 % as large as the array itself. ECP5 has no
 shift-register LUT primitive, so every stage is a flip-flop here; on the Zynq
 the same lines are 218 SRLs and 756 flip-flops.
 
-The critical path of the complete design is in the control logic, between
-the tile controller and the bias stream of the sequencer, and three quarters
-of it is routing. Two earlier critical paths are gone: one from the AXI4-Lite
+With the previous RTL the critical path of the complete design was in the
+control logic, between the tile controller and the bias stream of the
+sequencer, three quarters of it routing (132 - 138 MHz). The control logic
+was then restructured for the ASIC (see there); here that took it off the
+critical path but cost more in placement than it gained, see above. Two
+earlier critical paths are gone: one from the AXI4-Lite
 write logic through the request checks into the sequencer (removed by
 registering the request pulses) and the comparators of the tile iterators
 (replaced by flags, see the ASIC part); together they took the design from

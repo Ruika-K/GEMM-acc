@@ -37,7 +37,7 @@ module gemm_out #(
     localparam int CIW = (COLS > 1) ? $clog2(COLS) : 1;
 
     logic          it_valid, it_last, it_next;
-    logic [NW-1:0] tile_n;
+    logic [NW-1:0] tile_n_last;
     logic [NW-1:0] col_q;
     logic          beat, row_end;
 
@@ -50,9 +50,11 @@ module gemm_out #(
         .next_i    (it_next),
         .valid_o   (it_valid),
         /* verilator lint_off PINCONNECTEMPTY */
-        .tile_m_o  (),
-        .tile_n_o  (tile_n),
-        .col_last_o(),
+        .tile_m_o     (),
+        .tile_n_o     (),
+        .tile_m_last_o(),
+        .tile_n_last_o(tile_n_last),
+        .col_last_o   (),
         /* verilator lint_on PINCONNECTEMPTY */
         .last_o    (it_last)
     );
@@ -62,7 +64,7 @@ module gemm_out #(
 
     assign m_valid_o = c_valid_i && it_valid;
     assign m_data_o  = AXIS_W'(elem);                 // sign extended
-    assign row_end   = (col_q == tile_n - 1'b1);
+    assign row_end   = (col_q == tile_n_last);
     assign m_last_o  = it_last && c_last_i && row_end;
 
     assign beat      = m_valid_o && m_ready_i;

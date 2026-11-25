@@ -25,6 +25,7 @@ CORE_SOURCES = ARRAY_SOURCES + [
 TOP_SOURCES = CORE_SOURCES + [
     RTL / "gemm_mem.sv",
     RTL / "gemm_tile_iter.sv",
+    RTL / "gemm_dcnt.sv",
     RTL / "gemm_load.sv",
     RTL / "gemm_seq.sv",
     RTL / "gemm_out.sv",
@@ -133,6 +134,12 @@ def simulate(top, sources, test_module, parameters):
         test_dir=TB,
         build_dir=build_dir,
     )
+
+
+@pytest.mark.parametrize("width", [16, 5])
+def test_gemm_dcnt(width):
+    """The split down-counter of the loader, up to its largest value."""
+    simulate("gemm_dcnt", [RTL / "gemm_dcnt.sv"], "test_gemm_dcnt", {"W": width})
 
 
 MAC_CONFIGS = [

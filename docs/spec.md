@@ -64,6 +64,7 @@ Inside `gemm_core`:
 | `gemm_mem`       | Operand memory, one word per array edge |
 | `gemm_load`      | Writes the row-major input stream into the memories |
 | `gemm_tile_iter` | Walks the tiles of a matrix |
+| `gemm_dcnt`      | Down-counter that only reports when it reaches 1 (loader) |
 | `gemm_seq`       | Feeds commands, operands and bias to the core |
 | `gemm_out`       | Serialises result rows |
 | `gemm_csr`       | AXI4-Lite registers |
@@ -410,9 +411,11 @@ plain row-major order. `tb/gemm_host.py` contains the reference reordering
    Zynq-7000, and the saved-carry accumulator and the multiplier without a
    final adder that came out of the timing analysis.
 5. **[in progress]** Physical design beyond the array. Done: the PE as a
-   hard macro and hierarchical place and route of arrays up to 16 x 16.
-   Planned: SRAM macros for the operand memories, place and route of the
-   complete accelerator, power from simulated activity, clock gating.
+   hard macro and hierarchical place and route of arrays up to 16 x 16; the
+   control logic restructured so that the complete accelerator is as fast as
+   the array before layout. Planned: SRAM macros for the operand memories,
+   place and route of the complete accelerator, power from simulated
+   activity, clock gating.
 6. **[planned]** Extensions, in no fixed order: output requantisation (shift,
    saturate, ReLU), row-major result order through a band buffer, several
    elements per input beat, weight-stationary mode, overlapping drain with the

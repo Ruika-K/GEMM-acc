@@ -41,6 +41,13 @@ Synthesis is bottom-up for `gemm_mac` and `gemm_cpa`: each is mapped once per
 variant and that netlist is placed into every design that contains it, so that all arrays,
 systolic and broadcast, are built from the same gates.
 
+`core_8*` and `top_8*` are mapped with a different ABC script (`ABC_DELAY`,
+job option `abc="delay"`): SOP balancing and delay-oriented resynthesis before
+the mapping. With Yosys' default script the counters and comparators of the
+control logic came out as ripple chains of OR gates, even though every adder
+is first built as a Sklansky prefix tree. The datapath keeps the default
+script; it is in the hard modules above.
+
 Results go to `syn/asic/results.csv`; netlists, timing reports and an area
 breakdown per module (`breakdown.txt`) to `syn/build/asic/<job>/`. These are
 pre-layout numbers: no wires, no clock tree.

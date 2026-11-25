@@ -80,6 +80,8 @@ module gemm_seq #(
         .tile_m_o  (cmd_m_o),
         .tile_n_o  (cmd_n_o),
         /* verilator lint_off PINCONNECTEMPTY */
+        .tile_m_last_o(),
+        .tile_n_last_o(),
         .col_last_o(),
         .last_o    ()
         /* verilator lint_on PINCONNECTEMPTY */
@@ -97,6 +99,7 @@ module gemm_seq #(
     logic            ab_it_valid, ab_it_col_last, ab_next;
     logic            ab_advance, ab_tile_end;
     logic [KW-1:0]   ab_k_q;                  // reads still to issue for the current tile
+    logic            ab_tile_end_q;           // ab_k_q == 1, kept as a flag (see gemm_ctrl)
     logic [A_AW-1:0] a_addr_q, a_base_q;
     logic [B_AW-1:0] b_addr_q, b_base_q;
 
@@ -111,6 +114,8 @@ module gemm_seq #(
         /* verilator lint_off PINCONNECTEMPTY */
         .tile_m_o  (),
         .tile_n_o  (),
+        .tile_m_last_o(),
+        .tile_n_last_o(),
         .col_last_o(ab_it_col_last),
         .last_o    ()
         /* verilator lint_on PINCONNECTEMPTY */
@@ -121,7 +126,7 @@ module gemm_seq #(
     // A down counter from K to 1: no subtraction or comparison against the
     // dimension register in the path that advances the tile iterator, and
     // none where the counter is loaded either.
-    assign ab_tile_end = (ab_k_q == KW'(1));
+    assign ab_tile_end = ab_tile_end_q;
     assign ab_next     = ab_re_o && ab_tile_end;
     assign a_addr_o    = a_addr_q;
     assign b_addr_o    = b_addr_q;
@@ -138,18 +143,21 @@ module gemm_seq #(
 
     always_ff @(posedge clk) begin
         if (start_i) begin
-            ab_k_q   <= k;
+            ab_k_q        <= k;
+            ab_tile_end_q <= (k == KW'(1));
             a_addr_q <= '0;
             a_base_q <= '0;
             b_addr_q <= '0;
             b_base_q <= '0;
         end else if (ab_re_o) begin
             if (!ab_tile_end) begin
-                ab_k_q   <= ab_k_q - 1'b1;
+                ab_k_q        <= ab_k_q - 1'b1;
+                ab_tile_end_q <= (ab_k_q == KW'(2));
                 a_addr_q <= a_addr_q + 1'b1;
                 b_addr_q <= b_addr_q + 1'b1;
             end else begin
-                ab_k_q <= k;
+                ab_k_q        <= k;
+                ab_tile_end_q <= (k == KW'(1));
                 if (ab_it_col_last) begin
                     // Next band: next segment of A, back to the first of B.
                     a_base_q <= a_base_q + A_AW'(k);
@@ -170,7 +178,7 @@ module gemm_seq #(
     // Bias: one memory read per tile, then the same word for tile_m beats.
     // ------------------------------------------------------------------
     logic               d_it_valid, d_it_col_last, d_next;
-    logic [MW-1:0]      d_tile_m;
+    logic [MW-1:0]      d_tile_m_last;
     logic               d_loaded_q;            // memory output holds this tile's word
     logic [MW-1:0]      d_row_q;
     logic [BIAS_AW-1:0] d_col_q;               // tile column = bias word address
@@ -179,24 +187,32 @@ module gemm_seq #(
     gemm_tile_iter #(.ROWS(ROWS), .COLS(COLS), .DIM_W(DIM_W)) u_d_iter (
         .clk       (clk),
         .rst_n     (rst_n),
-        .start_i   (start_i && bias_en_i),
+        .start_i   (start_i),
         .m_i       (m_i),
         .n_i       (n_i),
         .next_i    (d_next),
         .valid_o   (d_it_valid),
-        .tile_m_o  (d_tile_m),
         /* verilator lint_off PINCONNECTEMPTY */
+        .tile_m_o  (),
         .tile_n_o  (),
+        .tile_m_last_o(d_tile_m_last),
+        .tile_n_last_o(),
         .col_last_o(d_it_col_last),
         .last_o    ()
         /* verilator lint_on PINCONNECTEMPTY */
     );
 
-    assign bias_re_o   = d_it_valid && !d_loaded_q;
+    // The iterator starts with every matrix (start_i fans out to most of the
+    // sequencer and arrives late; an AND with bias_en_i in front of the
+    // iterator was on the slowest path left). Without bias it is never
+    // advanced, and its outputs are masked here.
+    logic d_on;
+    assign d_on        = d_it_valid && bias_en_i;
+    assign bias_re_o   = d_on && !d_loaded_q;
     assign bias_addr_o = d_col_q;
-    assign d_valid_o   = d_it_valid && d_loaded_q;
+    assign d_valid_o   = d_on && d_loaded_q;
     assign d_beat      = d_valid_o && d_ready_i;
-    assign d_next      = d_beat && (d_row_q == d_tile_m - 1'b1);
+    assign d_next      = d_beat && (d_row_q == d_tile_m_last);
 
     always_ff @(posedge clk) begin
         if (!rst_n || start_i) begin

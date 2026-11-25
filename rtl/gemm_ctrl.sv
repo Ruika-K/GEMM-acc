@@ -81,33 +81,50 @@ module gemm_ctrl #(
     logic [MW-1:0] prev_m_q;
 
     logic [MW-1:0] row_q;      // shift beat counter, 0 .. ROWS-1
-    logic [KW-1:0] k_q;        // operand beat counter
+    logic [KW-1:0] k_rem_q;    // operand beats left in this tile
     logic [MW-1:0] wait_q;     // idle cycle counter
     logic [CW-1:0] credit_q;   // free output FIFO slots not yet promised
+
+    // Next values of the registers above, and the decisions for the next
+    // cycle worked out from them. The beat decisions of a cycle are then
+    // registered flags: d_valid_i, ab_valid_i and c_pop_i, which arrive from
+    // other blocks, meet registers only, and the counters and comparators
+    // are on paths from register to register. (Comparing row_q with the tile
+    // height and k with the tile depth in the same cycle as the beat they
+    // decide put the controller, the D stream and its tile iterator in one
+    // path of 7 - 8 ns at the slow corner.)
+    state_e          state_n;
+    logic            pend_valid_n, cur_valid_n, prev_valid_n, cur_has_d_n;
+    logic [MW-1:0]   cur_m_n, prev_m_n, row_n, wait_n;
+    logic [KW-1:0]   cur_k_n, k_rem_n;
+    logic [CW-1:0]   credit_n;
+
+    logic need_d_q;       // this shift beat preloads a D row
+    logic need_credit_q;  // this shift beat drains a result row
+    logic last_row_q;     // ... the last one of the drained tile
+    logic credit_ok_q;    // a FIFO slot is free
+    logic shift_last_q;   // this shift beat is the last of the phase
+    logic k_last_q;       // this operand beat is the last of the tile
 
     // ------------------------------------------------------------------
     // Beat decisions
     // ------------------------------------------------------------------
-    logic in_shift, need_d, need_credit, credit_ok, shift_fire, mac_fire;
+    logic in_shift, shift_fire, mac_fire;
 
-    assign in_shift    = (state_q == S_SHIFT);
-    assign need_d      = cur_valid_q && cur_has_d_q && (row_q < cur_m_q);
-    assign need_credit = prev_valid_q && (row_q < prev_m_q);
-    assign credit_ok   = (credit_q != '0);
-
-    assign shift_fire = in_shift && (!need_d || d_valid_i) && (!need_credit || credit_ok);
+    assign in_shift   = (state_q == S_SHIFT);
+    assign shift_fire = in_shift && (!need_d_q || d_valid_i) && (!need_credit_q || credit_ok_q);
     assign mac_fire   = (state_q == S_MAC) && ab_valid_i;
 
     // Ready signals depend on registered state only, never on the valid they
     // answer or on another channel's valid.
     assign cmd_ready_o = !pend_valid_q;
-    assign d_ready_o   = in_shift && need_d && (!need_credit || credit_ok);
+    assign d_ready_o   = in_shift && need_d_q && (!need_credit_q || credit_ok_q);
     assign ab_ready_o  = (state_q == S_MAC);
 
     assign shift_o   = shift_fire;
-    assign d_take_o  = shift_fire && need_d;
-    assign c_valid_o = shift_fire && need_credit;
-    assign c_last_o  = c_valid_o && (row_q == prev_m_q - 1'b1);
+    assign d_take_o  = shift_fire && need_d_q;
+    assign c_valid_o = shift_fire && need_credit_q;
+    assign c_last_o  = c_valid_o && last_row_q;
     assign mac_o     = mac_fire;
     assign col_en_o  = cur_col_en_q;
 
@@ -118,7 +135,9 @@ module gemm_ctrl #(
     // ------------------------------------------------------------------
     // Start a shift phase: the buffered command (if any) becomes the current
     // tile, and the tile that was current (if it was computed) is drained.
-    logic start_shift, start_from_tile;
+    logic start_shift, start_from_tile, cmd_take;
+
+    assign cmd_take = cmd_valid_i && cmd_ready_o;
 
     always_comb begin
         start_shift     = 1'b0;
@@ -126,7 +145,7 @@ module gemm_ctrl #(
         case (state_q)
             S_IDLE:  start_shift = pend_valid_q;
             S_MAC: begin
-                start_shift     = mac_fire && (k_q == cur_k_q - 1'b1) && (ROWS == 1);
+                start_shift     = mac_fire && k_last_q && (ROWS == 1);
                 start_from_tile = 1'b1;
             end
             S_WAIT: begin
@@ -137,74 +156,120 @@ module gemm_ctrl #(
         endcase
     end
 
+    always_comb begin
+        state_n      = state_q;
+        pend_valid_n = pend_valid_q;
+        cur_valid_n  = cur_valid_q;
+        cur_m_n      = cur_m_q;
+        cur_k_n      = cur_k_q;
+        cur_has_d_n  = cur_has_d_q;
+        prev_valid_n = prev_valid_q;
+        prev_m_n     = prev_m_q;
+        row_n        = row_q;
+        k_rem_n      = k_rem_q;
+        wait_n       = wait_q;
+
+        case (state_q)
+            S_SHIFT: begin
+                if (shift_fire) begin
+                    if (shift_last_q) begin
+                        row_n        = '0;
+                        prev_valid_n = 1'b0;
+                        k_rem_n      = cur_k_q;
+                        if (cur_valid_q) state_n = S_MAC;
+                        else             state_n = S_IDLE;
+                    end else begin
+                        row_n = row_q + 1'b1;
+                    end
+                end
+            end
+            S_MAC: begin
+                if (mac_fire) begin
+                    k_rem_n = k_rem_q - 1'b1;
+                    if (k_last_q) begin
+                        wait_n  = MW'(ROWS - 2);
+                        state_n = S_WAIT;
+                    end
+                end
+            end
+            S_WAIT: wait_n = wait_q - 1'b1;
+            default: ;
+        endcase
+
+        if (start_shift) begin
+            state_n      = S_SHIFT;
+            row_n        = '0;
+            prev_valid_n = start_from_tile;
+            prev_m_n     = cur_m_q;
+            cur_valid_n  = pend_valid_q;
+            cur_m_n      = pend_m_q;
+            cur_k_n      = pend_k_q;
+            cur_has_d_n  = pend_has_d_q;
+            pend_valid_n = 1'b0;
+        end
+        if (cmd_take) pend_valid_n = 1'b1;
+    end
+
     always_ff @(posedge clk) begin
         if (!rst_n) begin
-            state_q      <= S_IDLE;
-            pend_valid_q <= 1'b0;
-            cur_valid_q  <= 1'b0;
-            prev_valid_q <= 1'b0;
-            row_q        <= '0;
-            k_q          <= '0;
-            wait_q       <= '0;
+            state_q       <= S_IDLE;
+            pend_valid_q  <= 1'b0;
+            cur_valid_q   <= 1'b0;
+            prev_valid_q  <= 1'b0;
+            row_q         <= '0;
+            k_rem_q       <= '0;
+            wait_q        <= '0;
+            need_d_q      <= 1'b0;
+            need_credit_q <= 1'b0;
+            shift_last_q  <= (ROWS == 1);   // row_q is 0
+            k_last_q      <= 1'b0;
         end else begin
-            case (state_q)
-                S_SHIFT: begin
-                    if (shift_fire) begin
-                        if (row_q == MW'(ROWS - 1)) begin
-                            row_q        <= '0;
-                            prev_valid_q <= 1'b0;
-                            k_q          <= '0;
-                            state_q      <= cur_valid_q ? S_MAC : S_IDLE;
-                        end else begin
-                            row_q <= row_q + 1'b1;
-                        end
-                    end
-                end
-                S_MAC: begin
-                    if (mac_fire) begin
-                        k_q <= k_q + 1'b1;
-                        if (k_q == cur_k_q - 1'b1) begin
-                            wait_q  <= MW'(ROWS - 2);
-                            state_q <= S_WAIT;
-                        end
-                    end
-                end
-                S_WAIT: wait_q <= wait_q - 1'b1;
-                default: ;
-            endcase
+            state_q      <= state_n;
+            pend_valid_q <= pend_valid_n;
+            cur_valid_q  <= cur_valid_n;
+            prev_valid_q <= prev_valid_n;
+            row_q        <= row_n;
+            k_rem_q      <= k_rem_n;
+            wait_q       <= wait_n;
 
-            if (start_shift) begin
-                state_q      <= S_SHIFT;
-                row_q        <= '0;
-                prev_valid_q <= start_from_tile;
-                prev_m_q     <= cur_m_q;
-                cur_valid_q  <= pend_valid_q;
-                cur_m_q      <= pend_m_q;
-                cur_k_q      <= pend_k_q;
-                cur_has_d_q  <= pend_has_d_q;
-                for (int j = 0; j < COLS; j++) cur_col_en_q[j] <= (NW'(j) < pend_n_q);
-                pend_valid_q <= 1'b0;
-            end
-
-            if (cmd_valid_i && cmd_ready_o) begin
-                pend_valid_q <= 1'b1;
-                pend_m_q     <= cmd_m_i;
-                pend_n_q     <= cmd_n_i;
-                pend_k_q     <= cmd_k_i;
-                pend_has_d_q <= cmd_has_d_i;
-            end
+            need_d_q      <= cur_valid_n && cur_has_d_n && (row_n < cur_m_n);
+            need_credit_q <= prev_valid_n && (row_n < prev_m_n);
+            shift_last_q  <= (row_n == MW'(ROWS - 1));
+            k_last_q      <= (k_rem_n == KW'(1));
+        end
+        // Not reset: only read while the flags above say they are valid.
+        cur_m_q     <= cur_m_n;
+        cur_k_q     <= cur_k_n;
+        cur_has_d_q <= cur_has_d_n;
+        prev_m_q    <= prev_m_n;
+        last_row_q  <= (row_n == prev_m_n - 1'b1);
+        if (start_shift) begin
+            for (int j = 0; j < COLS; j++) cur_col_en_q[j] <= (NW'(j) < pend_n_q);
+        end
+        if (cmd_take) begin
+            pend_m_q     <= cmd_m_i;
+            pend_n_q     <= cmd_n_i;
+            pend_k_q     <= cmd_k_i;
+            pend_has_d_q <= cmd_has_d_i;
         end
     end
 
     // ------------------------------------------------------------------
     // Output credits
     // ------------------------------------------------------------------
+    always_comb begin
+        credit_n = credit_q;
+        if (c_valid_o && !c_pop_i)      credit_n = credit_q - 1'b1;
+        else if (!c_valid_o && c_pop_i) credit_n = credit_q + 1'b1;
+    end
+
     always_ff @(posedge clk) begin
         if (!rst_n) begin
-            credit_q <= CW'(OUT_DEPTH);
+            credit_q    <= CW'(OUT_DEPTH);
+            credit_ok_q <= 1'b1;
         end else begin
-            if (c_valid_o && !c_pop_i)      credit_q <= credit_q - 1'b1;
-            else if (!c_valid_o && c_pop_i) credit_q <= credit_q + 1'b1;
+            credit_q    <= credit_n;
+            credit_ok_q <= (credit_n != '0);
         end
     end
 

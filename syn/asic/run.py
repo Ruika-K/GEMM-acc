@@ -76,7 +76,7 @@ CPA = rtl("gemm_cpa")
 PE = rtl("gemm_mac", "gemm_pe")
 ARRAY = rtl("gemm_mac", "gemm_cpa", "gemm_pe", "gemm_array")
 CORE = ARRAY + rtl("gemm_delay", "gemm_fifo", "gemm_ctrl", "gemm_core")
-TOP = CORE + rtl("gemm_tile_iter", "gemm_load", "gemm_seq", "gemm_out", "gemm_csr", "gemm_top")
+TOP = CORE + rtl("gemm_tile_iter", "gemm_dcnt", "gemm_load", "gemm_seq", "gemm_out", "gemm_csr", "gemm_top")
 BCAST = rtl("gemm_mac", "gemm_cpa") + [ROOT / "syn" / "common" / "gemm_array_bcast.sv"]
 MEM_BB = HERE / "gemm_mem_blackbox.sv"
 
@@ -145,9 +145,9 @@ def jobs():
             out[f"sys_{n}{sfx}"] = dict(top="gemm_array", sources=ARRAY, params=size, **kw)
             out[f"bcast_{n}{sfx}"] = dict(top="gemm_array_bcast", sources=BCAST, params=size, **kw)
         size = {"ROWS": 8, "COLS": 8, **extra}
-        out[f"core_8{sfx}"] = dict(top="gemm_core", sources=CORE, params=size, **kw)
+        out[f"core_8{sfx}"] = dict(top="gemm_core", sources=CORE, params=size, abc="delay", **kw)
         out[f"top_8{sfx}"] = dict(top="gemm_top", sources=TOP + [MEM_BB], params=size,
-                                  clock="aclk", **kw)
+                                  clock="aclk", abc="delay", **kw)
 
     size = {"ROWS": 8, "COLS": 8}
     out["pe_nopipe"] = dict(top="gemm_pe", sources=PE, params={"PE_PIPE": 0},
@@ -187,6 +187,18 @@ def use_hard(netlist, module, hard):
     return netlist[:m.start()] + body + netlist[m.end():]
 
 
+# ABC script for control logic (job option abc="delay"). Yosys' default for a
+# liberty with constraints restructures for area (dc2, dch) and then maps for
+# delay; on the counters and comparators of the control logic that left
+# chains of 8 and more OR gates where a balanced tree has 3 or 4 levels. This
+# script adds SOP balancing (&if -g) and delay-oriented resynthesis (&synch2)
+# before mapping. gemm_load alone: 7.57 -> 6.10 ns at the slow corner, same
+# number of cells.
+ABC_DELAY = ("strash; &get -n; &fraig -x; &put; scorr; dc2; dretime; strash; "
+             "&get -n; &st; &if -g -K 6; &synch2; &if -g -K 6; &synch2; &put; "
+             "&get -n; &dch -f; &nf {D}; &put; buffer; upsize {D}; dnsize {D}; stime -p")
+
+
 def synth(name, job, work):
     lib = CORNERS["tt"]
     period_ps = int(job["period"] * 1000)
@@ -197,6 +209,10 @@ def synth(name, job, work):
     extra = f"-extra-map +/choices/{adder}.v" if adder != "ripple" else ""
     (work / "abc.constr").write_text(
         f"set_driving_cell {DRIVING_CELL}\nset_load {LOAD_PF * 1000}\n")
+    abc_script = ""
+    if job.get("abc") == "delay":
+        (work / "abc.script").write_text(ABC_DELAY + "\n")
+        abc_script = f"-script {work / 'abc.script'}"
     script = f"""
         read_verilog -sv -DSYNTHESIS {' '.join(str(s) for s in job['sources'])}
         {f"chparam {chparam} {job['top']}" if chparam else ""}
@@ -205,7 +221,7 @@ def synth(name, job, work):
         synth -booth {extra}
         opt -purge
         dfflibmap -liberty {lib} {dont_use()}
-        abc -liberty {lib} {dont_use()} -constr {work / 'abc.constr'} -D {period_ps}
+        abc -liberty {lib} {dont_use()} -constr {work / 'abc.constr'} -D {period_ps} {abc_script}
         hilomap -hicell sky130_fd_sc_hd__conb_1 HI -locell sky130_fd_sc_hd__conb_1 LO
         opt_clean -purge
         write_verilog -noattr -noexpr -nohex -nodec {work / 'netlist_yosys.v'}
@@ -249,8 +265,8 @@ def synth(name, job, work):
 
 
 def short(module):
-    """'$paramod$<hash>\\gemm_pe' -> 'gemm_pe'."""
-    return module.split("\\")[-1]
+    """'$paramod$<hash>\\gemm_pe' or '$paramod\\gemm_dcnt\\W=...' -> the module name."""
+    return [p for p in module.split("\\") if "=" not in p][-1]
 
 
 def write_breakdown(stat, top, path):

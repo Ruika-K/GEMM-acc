@@ -36,16 +36,20 @@ OpenROAD):
   same datapath netlist. With the plain datapath the two are equally fast up
   to 8 x 8, because the adder hides the wires. Without the carry chains the
   broadcast array is 17 % slower at 8 x 8, and the gap grows with the array.
-* Synthesis of the complete accelerator with an 8 x 8 array: 184 kGE without
-  the memories, 125 MHz at the slow corner before layout; the control logic
-  around the array is what limits it now.
+* Synthesis of the complete accelerator with an 8 x 8 array: 193 kGE without
+  the memories, 161 MHz at the slow corner before layout, as fast as the
+  array alone. It was 125 MHz until the control logic was restructured:
+  decisions as registers worked out a cycle ahead, a split down-counter, a
+  FIFO with a registered head, and a technology mapping for delay.
 * Verification: 65 simulated configurations from a single datapath module up
   to the AXI top level, among them a test that drives every operand pair
   through the hand-written multiplier, and gate-level simulation of the
   synthesised and of the routed netlists.
 
-There are also FPGA prototypes: Lattice ECP5 with open tools (132 - 138 MHz
-for the complete accelerator) and Xilinx Zynq-7000 with Vivado (163 MHz). On
+There are also FPGA prototypes: Lattice ECP5 with open tools (119 - 128 MHz
+for the complete accelerator, 132 - 138 MHz before the control logic was
+restructured for the ASIC) and Xilinx Zynq-7000 with Vivado (163 MHz, previous
+RTL). On
 both, the systolic array keeps its frequency as it grows and a broadcast array
 with the same datapath does not: about 150 MHz against 138 -> 99 MHz on the
 ECP5 (4 x 4 to 12 x 12), 164 -> 158 MHz against 156 -> 139 MHz on the Zynq

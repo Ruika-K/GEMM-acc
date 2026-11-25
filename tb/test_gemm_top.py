@@ -148,6 +148,17 @@ async def ragged_shapes(dut):
 
 
 @cocotb.test()
+async def long_rows(dut):
+    """K above 256 and N above 256: the loader's element counters (gemm_dcnt)
+    cross the boundary of their low half, which the other tests never reach."""
+    p, rng, host = await setup(dut, SEED + 6)
+    assert p.fits(2, 300, 3), "the test needs K_MAX and A_DEPTH of at least 300"
+    await check(host, *operands(p, rng, 2, 300, 3, bias=False))
+    if p.fits(1, 2, 260):      # needs a bias memory of ceil(260 / COLS) words
+        await check(host, *operands(p, rng, 1, 2, 260))
+
+
+@cocotb.test()
 async def random_runs(dut):
     """Back-to-back runs with unrelated shapes: every run leaves stale data in
     the memories and in the unused lanes of the next one."""

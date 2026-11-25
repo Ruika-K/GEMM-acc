@@ -75,9 +75,6 @@ module gemm_load #(
     logic [AWI-1:0]   base_q;      // A: first word of the band; B: current k
     logic [AWI-1:0]   stride_q;    // K (1 for bias)
     logic [LWI-1:0]   lane_q;
-    logic [DIM_W-1:0] col_q;       // elements left in the stream row
-    logic [DIM_W-1:0] cols_q;      // stream row length
-    logic [DIM_W-1:0] rows_q;      // stream rows left
     logic             ovf_q;       // an out-of-range write was dropped
 
     logic beat, row_end, lane_end, in_range;
@@ -96,7 +93,44 @@ module gemm_load #(
     assign beat      = s_valid_i && s_ready_o;
     // A down counter from the row length to 1: no subtraction or comparison
     // against the row length, neither while counting nor when it is loaded.
-    assign row_end   = (col_q == DIM_W'(1));
+
+    // Elements left in the stream row, and stream rows left. Only their ends
+    // are needed, so they are gemm_dcnt counters: a plain 16-bit decrement
+    // here was the slowest path of the accelerator (6.5 ns, slow corner).
+    logic             rows_last;
+    logic [DIM_W-1:0] cols_start, rows_start;
+
+    always_comb begin
+        if (start_a_i) begin
+            cols_start = k_i;
+            rows_start = m_i;
+        end else if (start_b_i) begin
+            cols_start = n_i;
+            rows_start = k_i;
+        end else begin
+            cols_start = n_i;
+            rows_start = DIM_W'(1);
+        end
+    end
+
+    // Loaded in every idle cycle; the value matters only when a start comes.
+    gemm_dcnt #(.W(DIM_W)) u_col (
+        .clk     (clk),
+        .load_i  (!busy_o),
+        .value_i (cols_start),
+        .reload_i(beat && row_end),
+        .dec_i   (beat && !row_end),
+        .last_o  (row_end)
+    );
+
+    gemm_dcnt #(.W(DIM_W)) u_rows (
+        .clk     (clk),
+        .load_i  (!busy_o),
+        .value_i (rows_start),
+        .reload_i(1'b0),
+        .dec_i   (beat && row_end),
+        .last_o  (rows_last)
+    );
     assign lane_end  = (target_q == T_A) ? (lane_q == LWI'(ROWS - 1))
                                          : (lane_q == LWI'(COLS - 1));
     assign in_range  = (addr_q < depth) && !ovf_q;
@@ -124,21 +158,12 @@ module gemm_load #(
             if (start_a_i) begin
                 target_q <= T_A;
                 stride_q <= AWI'(k_i);
-                cols_q   <= k_i;
-                col_q    <= k_i;
-                rows_q   <= m_i;
             end else if (start_b_i) begin
                 target_q <= T_B;
                 stride_q <= AWI'(k_i);
-                cols_q   <= n_i;
-                col_q    <= n_i;
-                rows_q   <= k_i;
             end else if (start_bias_i) begin
                 target_q <= T_BIAS;
                 stride_q <= AWI'(1);
-                cols_q   <= n_i;
-                col_q    <= n_i;
-                rows_q   <= DIM_W'(1);
             end
         end else if (beat) begin
             if (!in_range && !ovf_q) begin
@@ -173,15 +198,9 @@ module gemm_load #(
                 end
             end
 
-            if (row_end) begin
-                col_q  <= cols_q;
-                rows_q <= rows_q - 1'b1;
-                if (rows_q == DIM_W'(1)) begin
-                    target_q <= T_NONE;
-                    done_o   <= 1'b1;
-                end
-            end else begin
-                col_q <= col_q - 1'b1;
+            if (row_end && rows_last) begin
+                target_q <= T_NONE;
+                done_o   <= 1'b1;
             end
         end
     end
