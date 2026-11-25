@@ -6,7 +6,7 @@ is the main target, and an FPGA implementation used as a prototype.
 | Flow | State |
 |------|-------|
 | ASIC, sky130, synthesis and pre-layout timing | done |
-| ASIC, sky130, place and route of the array | done up to 8 x 8; 16 x 16 to global routing |
+| ASIC, sky130, place and route of the array | done up to 16 x 16 (16 x 16 hierarchically, with the PE as a hard macro) |
 | FPGA, Lattice ECP5 (Yosys + nextpnr) | done |
 | FPGA, Xilinx Zynq-7000 (Vivado) | done |
 
@@ -15,6 +15,7 @@ The short version, 8 x 8 array on sky130, slow corner:
 | | Plain | Carry saved every 8 bits (`ACC_SEG = 8`) | No carry chain in the PE (`MUL_CS = 1`, `ACC_SEG = 4`) |
 |---|---|---|---|
 | Array, placed and routed | 89 MHz, 0.81 mm2 | 121 MHz, 0.88 mm2 | **198 MHz**, 1.01 mm2 |
+| 16 x 16 array, hierarchical place and route | 90 MHz, 3.67 mm2 | 121 MHz, 4.01 mm2 | **198 MHz**, 4.45 mm2 |
 | Complete accelerator, synthesis only, without memories | 86 MHz, 157 kGE | 107 MHz, 166 kGE | 125 MHz, 184 kGE |
 
 Systolic against broadcast, same datapath in both, three technologies:
@@ -26,6 +27,7 @@ Systolic against broadcast, same datapath in both, three technologies:
 | sky130, routed, slow corner, 4 x 4 -> 8 x 8, plain accumulator | 90 -> 89 MHz | 90 -> 90 MHz |
 | sky130, routed, slow corner, 4 x 4 -> 8 x 8, `ACC_SEG = 8` | 122 -> 121 MHz | 118 -> 115 MHz |
 | sky130, routed, slow corner, 4 x 4 -> 8 x 8, `MUL_CS = 1` | 194 -> 198 MHz | 182 -> 165 MHz |
+| sky130, slow corner, 16 x 16, `MUL_CS = 1` | 198 MHz (hierarchical, routed) | 129 MHz (reduced flow, estimate) |
 
 The more of the critical path is wire, the more the neighbour-only wiring is
 worth. On the FPGAs routing is over half of it; on the ASIC the difference
@@ -254,7 +256,7 @@ utilisation with pins on the side their data comes from, given a power grid,
 placed, given a clock tree, repaired for setup and hold, routed, and timed at
 three corners: typical, slow, and fast (ff, -40 C, 1.95 V).
 
-Two flows, because the full one does not scale to the largest array on the
+Three flows, because the full one does not scale to the largest array on the
 machine used:
 
 * **Full**: timing-driven placement, detailed routing, parasitics extracted
@@ -262,6 +264,10 @@ machine used:
 * **Reduced**: placement for wire length, buffering by electrical rules only,
   timing from the wire estimates of global routing. 8 x 8 (for calibration
   against the full flow) and 16 x 16.
+* **Hierarchical**: the PE placed, routed and extracted once as a hard macro,
+  the array built from copies of it, then a flat timing analysis of the whole
+  with every netlist and every extracted wire. Systolic 8 x 8 and 16 x 16,
+  see [below](#hierarchical-flow-the-pe-as-a-hard-macro).
 
 Three variants of the datapath: plain, `ACC_SEG = 8`, and `MUL_CS = 1` with
 `ACC_SEG = 4`. Frequencies are for the worst register-to-register path. The
@@ -308,11 +314,19 @@ sign-off DRC or LVS has been run.
 
 Hold needs more attention as the datapath gets faster and the shift chain
 wider. The plain arrays needed no hold buffers, the 8 x 8 systolic array with
-`ACC_SEG = 8` has 149, and the one with `MUL_CS = 1` has 754, and the worst hold slack is at the slow corner,
-not the fast one: the clock tree and its skew scale with the corner too. A
-first run of this variant without the margin missed hold on two blocks, by 2
-and 19 ps, after routing had moved the wire delays away from the estimates
-that hold repair had worked on.
+`ACC_SEG = 8` has 149, and the one with `MUL_CS = 1` has 1141 in the routed
+netlist (the repair log of that run reports 754). Most of them are not where
+one would expect, between neighbouring PEs: 911 of the 1141, and all 149, are
+on paths from the inputs of the block. The constraints launch the inputs at
+the ideal clock edge, while the registers they reach see the clock only after
+the clock tree, a nanosecond or more later at the slow corner; the buffers
+make up the difference. That is an artefact of constraining the array on its
+own (see the hierarchical flow below, which leaves these paths to
+integration). The worst hold slack is at the slow corner, not the fast one:
+the clock tree and its skew scale with the corner too. A first run of this
+variant without the margin missed hold on two blocks, by 2 and 19 ps, after
+routing had moved the wire delays away from the estimates that hold repair
+had worked on.
 
 ## Reduced flow
 
@@ -330,6 +344,124 @@ pessimistic for the systolic array and 8 - 10 % for the baseline, so it
 overstates the gap between the two by a few per cent: the broadcast nets need
 buffering that follows timing, and this flow only buffers for electrical
 rules. The 16 x 16 baseline numbers are the softest in this document.
+
+## Hierarchical flow: the PE as a hard macro
+
+Flow: `syn/asic/pnr.py` with `syn/asic/pnr.tcl` (macro mode), `etm.tcl`,
+`pnr_hier.tcl` and `sta_flat.tcl`; how it works is in
+[syn/README.md](../syn/README.md#hierarchical-flow). The PE is placed, routed
+and extracted once, with its pins on matching tracks of opposite edges, and
+described to the top level by an abstract and three timing models. The top
+level places N x N copies on a grid with narrow channels between them, the
+final adders in a strip to the north, and routes the rest. All numbers below
+come from a flat timing analysis at the end: the routed netlists of top level
+and macro and the extracted parasitics of both, read once per PE (256 times at
+16 x 16), without the timing models.
+
+Fmax typical / slow / fast (MHz), systolic arrays:
+
+| Variant | 8 x 8 full flow | 8 x 8 hierarchical | 16 x 16 hierarchical | 16 x 16 reduced flow |
+|---------|-----------------|--------------------|----------------------|----------------------|
+| plain | 169 / 89 / 270 | 170 / 90 / 271 | **170 / 90 / 271** | 156 / 82 |
+| `ACC_SEG = 8` | 227 / 121 / 357 | 226 / 120 / 357 | **226 / 121 / 355** | 215 / 114 |
+| `MUL_CS = 1`, `ACC_SEG = 4` | 392 / 198 / 620 | 397 / 199 / 628 | **390 / 198 / 615** | 343 / 174 |
+
+Die (mm2), run time (s):
+
+| Variant | 8 x 8 full flow | 8 x 8 hierarchical | 16 x 16 hierarchical | 16 x 16 reduced flow |
+|---------|-----------------|--------------------|----------------------|----------------------|
+| plain | 0.81, 1787 | 0.94 (+ 16 %), 48 | 3.67 (+ 15 %), 164 | 3.20, 436 |
+| `ACC_SEG = 8` | 0.88, 3379 | 1.05 (+ 20 %), 93 | 4.01 (+ 19 %), 249 | 3.36, 475 |
+| `MUL_CS = 1`, `ACC_SEG = 4` | 1.01, 3656 | 1.18 (+ 16 %), 105 | 4.45 (+ 16 %), 307 | 3.84, 802 |
+
+Run times are for the top level including the flat analysis; the macro takes
+another 1.5 - 2.5 minutes, once. All hierarchical blocks are free of routing violations, have every
+instance connected to both power nets (`check_power_grid`), and meet hold
+between registers at all corners (worst 0.16 - 0.32 ns). The routed 8 x 8
+arrays of all three variants and the 16 x 16 array with `MUL_CS = 1`,
+top-level netlist together with the macro netlist, pass the array testbench
+in gate-level simulation (`syn/asic/gls.py --hier`).
+
+**A 16 x 16 array is as fast as an 8 x 8 one, now measured on a routed and
+extracted layout: 198 MHz at the slow corner with `MUL_CS = 1`.** The reduced
+flow had estimated 174 MHz; it was 6 - 12 % pessimistic at 16 x 16, more than
+the 5 - 8 % measured at 8 x 8. The critical path is the same in every array:
+the forwarding register of one PE, the channel, the multiplier of the next.
+
+**The hierarchical result matches the flat one at 8 x 8**, within 1 %, in all
+three variants, at about a thirty-fifth of the run time.
+
+**What hierarchy costs is area: 15 - 20 % more die.** Per PE, the 8 x 8
+`MUL_CS` array spends 130.6 x 125.1 um (16 346 um2) where the flat one spends
+15 850 um2. The macro keeps its cells 2.8 um from its edge, where the pins
+are, and the channels between macros are 13.8 um (30 sites) and 5.4 um
+(2 rows) wide. Standard cell area is 5 - 20 % higher as well: each macro
+repairs hold on its own inputs and closes timing against fixed budgets instead
+of trading slack with its neighbours. A first version with twice the margin
+and channels twice as high cost 31 %. Narrower vertical channels (20 and 26
+sites) left no room for the 16x clock buffers between the tap cells.
+
+The timing models were close: through them the top level saw 198 / 196 MHz
+for the `MUL_CS` arrays and 118 MHz for `ACC_SEG = 8`, against 199 / 198 and
+120 / 121 MHz in the flat analysis.
+
+Things the flow needed that the flat flow did not, each found when a number
+did not add up:
+
+* **Budgets.** A path from one PE to the next starts at a register in one
+  macro and ends behind the multiplier of the other, so each macro is told how
+  much of the period lies outside it: 30 % before an input, 70 % after an
+  output. The output side is larger because the clock tree inside the macro
+  delays the launch (0.76 ns at the slow corner). With a first, arbitrary
+  split of 20 / 20 % each macro met its own constraints and the two together
+  were 0.36 ns too long.
+* **Hold as a contract between neighbours.** Every output stays unchanged for
+  0.3 ns after the clock edge, every input tolerates a change that early, so
+  each macro repairs hold on its own short input paths (`b_i` to the
+  register that forwards it). Left to the top level, the delay buffers had to
+  go on the wire to `b_i` as a whole, in front of the multiplier as well: 779
+  of them, and setup got worse. With the contract the top level needs none.
+  The `ACC_SEG = 8` macro misses the contract by 0.22 ns at the slow corner:
+  hold repair stopped after 8 buffers, on inputs that also feed the
+  multiplier, whose setup fails at this variant's target. The arrays built
+  from it meet hold, because a real neighbour changes its outputs a
+  nanosecond after the edge at that corner, not 0.3 ns.
+* **Timing models one corner at a time.** OpenROAD 26Q3's
+  `write_timing_model -scene` with three corners defined wrote the same
+  clock-to-output arcs for all three, 1.40 ns, where the flat analysis of the
+  macro gives 0.52 ns at the fast corner. OpenSTA with one corner per run
+  gives the right numbers.
+* **The clock edge the macro gets.** Characterised with an ideal clock, the
+  model's clock tree inside the macro was 0.15 ns faster than the real one,
+  which is driven through the top-level clock tree with a 0.35 ns edge. Paths
+  between macros do not see this (launch and capture shift alike); a path
+  from a block input does, and the flat analysis found it 0.18 ns short of
+  hold where the model said it was met. The macro is now characterised with
+  a 0.5 ns clock edge.
+* **The abstract.** By default the routed shapes are bloated and merged; the
+  merged met2 obstruction then covered part of the pins on the north edge and
+  the router found no access to them. Without bloating the abstract has
+  43 000 rectangles and detailed routing of the top level was about 50 times
+  slower. With every layer up to met4 obstructed as a whole it routes in a
+  minute.
+* **Pins per row and column.** Pins are placed before the cells, and the
+  output pins of a column first ended up hundreds of um away from it. The
+  final adder of that column was pulled apart between them and the macros,
+  with a 2 ns wire inside it: 129 MHz at 16 x 16. Each row and column now has
+  its pins next to it.
+* **Hold from the block inputs is left open.** At 16 x 16 the clock reaches
+  the registers 1 - 2 ns after the ideal edge the inputs are constrained to,
+  and closing that took over 3000 delay buffers before the repair gave up.
+  It is the same artefact as in the flat flow above, and it belongs to
+  integration, where the registers that drive the array are known. The top
+  level carries a false path for it; `hold_in_ns` in the table reports it
+  (down to -1.3 ns at 16 x 16 with `MUL_CS`).
+
+The broadcast baseline has not been run through this flow: its operand and
+control nets cross the whole array, so its PEs are not self-contained in the
+same way, and a macro version would need wide routing channels for the
+broadcast buses. The 16 x 16 comparison below is still between two
+reduced-flow numbers.
 
 ## Systolic against broadcast
 
@@ -406,8 +538,10 @@ both would have produced a wrong conclusion.
 
 * SRAM macros for the operand memories, and timing of the paths through them.
 * Place and route of the complete accelerator; only the array has been done.
-* The full flow for 16 x 16. The practical way is hierarchical: harden one PE
-  as a macro and tile it.
+* The broadcast baseline at 16 x 16 in a full or hierarchical flow; the
+  systolic array has both.
+* Hold from the inputs of the array, which the hierarchical flow leaves to
+  integration with the surrounding logic.
 * The control logic of the complete accelerator, which limits it to 125 MHz
   at the slow corner before layout while the array reaches 162 MHz.
 * A final adder sized for the carries it actually gets: with `ACC_SEG = 4`

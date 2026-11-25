@@ -82,13 +82,15 @@ initialize_floorplan -utilization $util -aspect_ratio 1.0 -core_space 5.52 -site
 if {$macro} {
     # Same core area, but the outline on the grid the macro will be placed on
     # (site width 0.46 um, two rows 5.44 um), so that its pins land on routing
-    # tracks and the rows of the top level can be cut cleanly around it.
+    # tracks and the rows of the top level can be cut cleanly around it. The
+    # cells keep 6 sites and one row away from the edge, where the pins are;
+    # every um here is paid for once per PE.
     lassign [ord::get_core_area] cx0 cy0 cx1 cy1
     set side [expr {sqrt(($cx1 - $cx0) * ($cy1 - $cy0))}]
-    set w [expr {0.46 * ceil(($side + 2 * 5.52) / 0.46)}]
-    set h [expr {5.44 * ceil(($side + 2 * 5.44) / 5.44)}]
+    set w [expr {0.46 * ceil(($side + 2 * 2.76) / 0.46)}]
+    set h [expr {5.44 * ceil(($side + 2 * 2.72) / 5.44)}]
     initialize_floorplan -die_area [list 0 0 $w $h] \
-        -core_area [list 5.52 5.44 [expr {$w - 5.52}] [expr {$h - 5.44}]] -site unithd
+        -core_area [list 2.76 2.72 [expr {$w - 2.76}] [expr {$h - 2.72}]] -site unithd
 }
 
 # Routing tracks: layer, direction, offset, pitch.

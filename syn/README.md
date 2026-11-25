@@ -80,7 +80,8 @@ The 16 x 16 arrays are about 160 000 cells. Timing-driven placement and
 detailed routing of a block that size each take hours on a four-core machine,
 so they go through the reduced flow, and the 8 x 8 arrays are run through
 both to show how the two flows compare. A full 8 x 8 run takes about 50
-minutes, a reduced 16 x 16 run about 10.
+minutes, a reduced 16 x 16 run about 10. The systolic arrays also go through
+the hierarchical flow below, which gives full-flow results for 16 x 16.
 
 Two things in this flow are there because of how OpenROAD (26Q3) behaves when
 it cannot close timing:
@@ -105,6 +106,62 @@ Gate-level simulation of a routed array (clock tree and hold buffers included):
 python3 syn/asic/gls.py --pnr sys_4
 python3 syn/asic/gls.py --pnr sys_8_s8
 ```
+
+### Hierarchical flow
+
+For the 16 x 16 arrays the full flow runs hierarchically: the PE is placed,
+routed and extracted once as a hard macro, and the array is built from copies
+of it. The top level of an 8 x 8 array takes one to two minutes this way, a
+16 x 16 one three to five, and the macro another two, once.
+
+```bash
+python3 syn/asic/pnr.py pe_m4_macro                       # the PE as a macro
+python3 syn/asic/pnr.py sys_8_m4_hier sys_16_m4_hier      # arrays built from it
+python3 syn/asic/gls.py sys_8_m4 --hier                   # gate-level simulation
+```
+
+| Job | What it does |
+|-----|--------------|
+| `pe_macro`, `pe_s8_macro`, `pe_m4_macro` | `pnr.tcl` with `PNR_MACRO=1`, then `etm.tcl`. Output in `syn/build/asic/pe*/macro/` |
+| `sys_N_hier`, `sys_N_s8_hier`, `sys_N_m4_hier` (N = 8, 16) | `pnr_hier.tcl`, then `sta_flat.tcl`. Output in `syn/build/asic/sys_N*/pnr_hier/` |
+
+* **The macro** (`pnr.tcl`, `PNR_MACRO=1`). Its pins are placed by hand
+  (`PNR_EDGES`, built by `pe_edges()` in `pnr.py`): pin k of the west edge at
+  the same height as pin k of the east edge, pin k of the north edge above pin
+  k of the south edge, all on routing tracks. Two copies side by side then
+  connect with straight wires. The outline is a multiple of the site width
+  and of two rows, power and signals stay below met5, and the abstract
+  (`gemm_pe.lef`) has every layer up to met4 obstructed as a whole.
+* **Its timing models** (`etm.tcl`): one Liberty file per corner, written by
+  OpenSTA from the routed netlist and its parasitics, one corner per run.
+  With several corners defined, OpenROAD 26Q3 wrote clock-to-output arcs that
+  were wrong at the typical and fast corner (1.40 ns where the macro has
+  0.52 ns).
+* **Budgets.** The path from one PE to the next starts at a register in one
+  macro and ends behind the multiplier in the other, so the macro needs to
+  know how much of it is outside: inputs may assume 30 % of the period is
+  gone (`MACRO_IN`), outputs leave 70 % (`MACRO_OUT`). Hold is a contract:
+  outputs stay unchanged for 0.3 ns after the clock edge and inputs tolerate
+  a change that early (`MACRO_HOLD`), so the macro repairs hold on its own
+  short input paths. The macro is characterised with the slow clock edge it
+  gets from the top-level clock tree (`MACRO_CLK_SLEW`).
+* **The top level** (`pnr_hier.tcl`): macros on a grid with channels of 30
+  sites and 2 rows (`CHANNEL_X`, `CHANNEL_Y`), the final adders in a strip to
+  the north, the pins of each row and column next to it, a pair of met4 power
+  straps in every vertical channel and met5 straps across the macros. Timing
+  repair, clock tree and routing see the macros through their timing models.
+* **Sign-off** (`sta_flat.tcl`): flat timing with the routed netlist of the
+  top level and of the macro and the extracted parasitics of both, read once
+  per macro instance. This is what `pnr_results.csv` reports;
+  `fmax_ss_model_mhz` is what the top level saw through the models.
+* **Hold from the block inputs is not closed.** The constraints launch the
+  inputs at the ideal clock edge while the registers inside see the clock
+  after the clock tree, 1 - 2 ns later; repairing that took 3000 delay buffers
+  at 16 x 16. It is a property of the constraints, not of the array, and is
+  closed when the block sits next to the registers that drive it. The top
+  level gets a false path for it; `hold_in_ns` reports it, `hold_slack_ns` is
+  hold between registers. (The full flow repairs these paths, which is where
+  most of its hold buffers go.)
 
 ## FPGA
 

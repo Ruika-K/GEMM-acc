@@ -19,9 +19,13 @@ target is an ASIC flow on SkyWater sky130 with open tools (Yosys, OpenSTA,
 OpenROAD):
 
 * Place and route of the array: 4 x 4 and 8 x 8 fully routed with extracted
-  parasitics, clock tree and hold repair; 16 x 16 placed and globally routed.
-  The 8 x 8 array reaches **198 MHz at the slow corner** (392 MHz typical) on
-  1.01 mm2.
+  parasitics, clock tree and hold repair. The 8 x 8 array reaches **198 MHz
+  at the slow corner** (392 MHz typical) on 1.01 mm2.
+* 16 x 16 placed and routed hierarchically: the PE hardened once as a macro
+  (abstract, timing models, budgets at its pins) and tiled 256 times, then
+  checked with a flat timing analysis of every netlist and extracted wire.
+  **198 MHz at the slow corner, the same as 8 x 8**, on 4.45 mm2, in five
+  minutes. The price of hierarchy is 15 - 20 % die area.
 * The two steps that got it there from 89 MHz, both found by following the
   critical path. First the accumulator: it saves a carry every few bits
   instead of propagating it through 32 (`ACC_SEG`, 121 MHz). Then the

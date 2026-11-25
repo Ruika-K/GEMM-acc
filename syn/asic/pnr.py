@@ -92,8 +92,9 @@ MACRO_IN = 0.3    # share of the period used before a macro input, see above
 MACRO_OUT = 0.7   # share of the period left after a macro output
 MACRO_HOLD = 0.3  # ns an output of a macro stays unchanged after the clock edge
 MACRO_CLK_SLEW = 0.5   # ns transition of the clock at a macro pin, see macro_constraints
-CHANNEL_X = 13.8  # um between macro columns (30 sites)
-CHANNEL_Y = 10.88 # um between macro rows (4 rows)
+CHANNEL_X = 13.8  # um between macro columns (30 sites; with 26, clock buffers
+                  # found no room between the tap cells)
+CHANNEL_Y = 5.44  # um between macro rows (2 rows)
 
 FIELDS = ["job", "top", "placement", "routing", "util_target", "die_um2", "cell_um2", "util_pct", "period_ns",
           "fmax_tt_mhz", "fmax_ss_mhz", "fmax_ff_mhz", "crit_path_bufs", "buf_chain", "hold_slack_ns",

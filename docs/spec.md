@@ -409,10 +409,10 @@ plain row-major order. `tb/gemm_host.py` contains the reference reordering
    gate-level simulation for the array, FPGA prototypes on ECP5 and
    Zynq-7000, and the saved-carry accumulator and the multiplier without a
    final adder that came out of the timing analysis.
-5. **[planned]** Physical design beyond the array: SRAM macros for the
-   operand memories, place and route of the complete accelerator, a hardened
-   PE macro for arrays of 16 x 16 and larger, power from simulated activity,
-   clock gating.
+5. **[in progress]** Physical design beyond the array. Done: the PE as a
+   hard macro and hierarchical place and route of arrays up to 16 x 16.
+   Planned: SRAM macros for the operand memories, place and route of the
+   complete accelerator, power from simulated activity, clock gating.
 6. **[planned]** Extensions, in no fixed order: output requantisation (shift,
    saturate, ReLU), row-major result order through a band buffer, several
    elements per input beat, weight-stationary mode, overlapping drain with the
