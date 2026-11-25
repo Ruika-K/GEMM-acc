@@ -15,6 +15,16 @@
 #                 only (much faster on large blocks; timing repair still runs)
 #   PNR_PINS      optional list of "pin-name-pattern region" pairs, e.g.
 #                 {a_i[*] left:* b_i[*] top:*}; other pins go anywhere
+#   PNR_MACRO     1: build a hard macro for syn/asic/pnr_hier.tcl. The pins are
+#                 placed by hand (PNR_EDGES), the block is sized on the
+#                 placement grid, power and signals stay below met5, and an
+#                 abstract (LEF) is written next to the layout (timing models:
+#                 etm.tcl)
+#   PNR_EDGES     with PNR_MACRO: dict edge -> ordered list of pins, e.g.
+#                 {left {a_i[0] a_i[1]} right {a_o[0] a_o[1]}}. Pin k of the
+#                 left edge is level with pin k of the right edge, and the
+#                 same for top and bottom, so that copies of the macro placed
+#                 side by side connect with straight wires
 #   PDK_ROOT      directory that contains sky130A
 #
 # Steps: floorplan -> power grid -> placement -> clock tree -> timing repair ->
@@ -28,6 +38,7 @@ set density $::env(PNR_DENSITY)
 set droute  $::env(PNR_DROUTE)
 set timing_place $::env(PNR_TIMING_PLACE)
 set hold_margin  $::env(PNR_HOLD_MARGIN)
+set macro   [expr {[info exists ::env(PNR_MACRO)] && $::env(PNR_MACRO)}]
 
 set pdk  [file join $::env(PDK_ROOT) sky130A]
 set ref  [file join $pdk libs.ref sky130_fd_sc_hd]
@@ -68,6 +79,17 @@ set_dont_use $dont_use
 stage "floorplan"
 # ------------------------------------------------------------------------------
 initialize_floorplan -utilization $util -aspect_ratio 1.0 -core_space 5.52 -site unithd
+if {$macro} {
+    # Same core area, but the outline on the grid the macro will be placed on
+    # (site width 0.46 um, two rows 5.44 um), so that its pins land on routing
+    # tracks and the rows of the top level can be cut cleanly around it.
+    lassign [ord::get_core_area] cx0 cy0 cx1 cy1
+    set side [expr {sqrt(($cx1 - $cx0) * ($cy1 - $cy0))}]
+    set w [expr {0.46 * ceil(($side + 2 * 5.52) / 0.46)}]
+    set h [expr {5.44 * ceil(($side + 2 * 5.44) / 5.44)}]
+    initialize_floorplan -die_area [list 0 0 $w $h] \
+        -core_area [list 5.52 5.44 [expr {$w - 5.52}] [expr {$h - 5.44}]] -site unithd
+}
 
 # Routing tracks: layer, direction, offset, pitch.
 set fh [open [file join $tech sky130_fd_sc_hd tracks.info]]
@@ -82,12 +104,51 @@ foreach layer {li1 met1 met2 met3 met4 met5} {
     make_tracks $layer -x_offset $xo -x_pitch $xp -y_offset $yo -y_pitch $yp
 }
 
-if {[info exists ::env(PNR_PINS)]} {
-    foreach {pattern region} $::env(PNR_PINS) {
-        set_io_pin_constraint -pin_names $pattern -region $region
+# Pins of a macro, put on tracks by hand: horizontal pins on met3 (pitch
+# 0.68 um), vertical ones on met2 (pitch 0.46 um), spread evenly along each edge
+# with 4 um kept free at the corners. Opposite edges use the same positions.
+proc edge_pins {edges die} {
+    lassign $die x0 y0 x1 y1
+    foreach {a b layer pitch offset size} {
+        left right met3 0.68 0.34 {0.8 0.3}
+        top bottom met2 0.46 0.23 {0.14 0.8}
+    } {
+        set la [expr {[dict exists $edges $a] ? [dict get $edges $a] : {}}]
+        set lb [expr {[dict exists $edges $b] ? [dict get $edges $b] : {}}]
+        set n [expr {max([llength $la], [llength $lb])}]
+        if {$n == 0} { continue }
+        set len [expr {$a eq "left" ? $y1 - $y0 : $x1 - $x0}]
+        set tracks [expr {int(($len - 2 * 4.0 - $offset) / $pitch)}]
+        set step [expr {max(1, $tracks / $n)}]
+        set first [expr {($tracks - $step * ($n - 1)) / 2 + int(4.0 / $pitch)}]
+        foreach side [list $a $b] pins [list $la $lb] {
+            set k 0
+            foreach pin $pins {
+                set t [format %.3f [expr {$offset + ($first + $k * $step) * $pitch}]]
+                switch $side {
+                    left   { set loc [list $x0 $t] }
+                    right  { set loc [list $x1 $t] }
+                    top    { set loc [list $t $y1] }
+                    bottom { set loc [list $t $y0] }
+                }
+                place_pin -pin_name $pin -layer $layer -location $loc -pin_size $size \
+                    -force_to_die_boundary
+                incr k
+            }
+        }
     }
 }
-place_pins -hor_layers met3 -ver_layers met2
+
+if {$macro} {
+    edge_pins $::env(PNR_EDGES) [ord::get_die_area]
+} else {
+    if {[info exists ::env(PNR_PINS)]} {
+        foreach {pattern region} $::env(PNR_PINS) {
+            set_io_pin_constraint -pin_names $pattern -region $region
+        }
+    }
+    place_pins -hor_layers met3 -ver_layers met2
+}
 tapcell -distance 13 -tapcell_master sky130_fd_sc_hd__tapvpwrvgnd_1
 
 # ------------------------------------------------------------------------------
@@ -111,9 +172,13 @@ proc snap {v} { return [format %.2f [expr {round($v / 0.02) * 0.02}]] }   ;# man
 set vpitch [snap [expr {min(153.6,  $core_w / 2.0)}]]
 set hpitch [snap [expr {min(153.18, $core_h / 2.0)}]]
 add_pdn_stripe -grid grid -layer met4 -width 1.6 -pitch $vpitch -offset [snap [expr {$vpitch / 4.0}]]
-add_pdn_stripe -grid grid -layer met5 -width 1.6 -pitch $hpitch -offset [snap [expr {$hpitch / 4.0}]]
 add_pdn_connect -grid grid -layers {met1 met4}
-add_pdn_connect -grid grid -layers {met4 met5}
+# A macro stops at met4: the top level runs its met5 straps across it and
+# connects them to the macro's met4 straps.
+if {!$macro} {
+    add_pdn_stripe -grid grid -layer met5 -width 1.6 -pitch $hpitch -offset [snap [expr {$hpitch / 4.0}]]
+    add_pdn_connect -grid grid -layers {met4 met5}
+}
 pdngen
 
 # ------------------------------------------------------------------------------
@@ -160,7 +225,11 @@ check_placement
 # ------------------------------------------------------------------------------
 stage "routing"
 # ------------------------------------------------------------------------------
-set_routing_layers -signal met1-met5 -clock met3-met5
+if {$macro} {
+    set_routing_layers -signal met1-met4 -clock met3-met4
+} else {
+    set_routing_layers -signal met1-met5 -clock met3-met5
+}
 global_route -congestion_iterations 50
 estimate_parasitics -global_routing
 
@@ -200,3 +269,16 @@ puts "elapsed [expr {[clock seconds] - $t0}] s"
 write_def     [file join $out $top.def]
 write_db      [file join $out $top.odb]
 write_verilog [file join $out $top.pnr.v]
+
+if {$macro} {
+    # What the top level sees of the macro: outline, pins and obstructions.
+    # Every layer the macro uses (up to met4) is one obstruction over the whole
+    # block, with the pins on its edges. The default instead bloats the drawn
+    # shapes and merges them; the merged met2 obstruction then covered part of
+    # the pins on the north edge, and the router of the top level found no way
+    # to reach them. The drawn shapes without bloating work, but are 43 000
+    # rectangles per macro, which made detailed routing of the top level about
+    # 50 times slower.
+    write_abstract_lef -bloat_occupied_layers [file join $out $top.lef]
+    # The timing models are written by etm.tcl, one corner at a time.
+}

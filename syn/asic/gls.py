@@ -5,10 +5,13 @@
     python3 syn/asic/gls.py sys_4          # netlist after synthesis
     python3 syn/asic/pnr.py sys_4
     python3 syn/asic/gls.py sys_4 --pnr    # netlist after place and route
+    python3 syn/asic/pnr.py pe_m4_macro sys_8_m4_hier
+    python3 syn/asic/gls.py sys_8_m4 --hier  # after hierarchical place and route
 
 With --pnr the netlist written after place and route is used: it additionally
 contains the clock tree, the buffers inserted for timing and hold repair, and
-every cell that was resized on the way.
+every cell that was resized on the way. With --hier it is the top level of the
+hierarchical flow together with the routed netlist of the PE macro.
 
 The netlist of syn/build/asic/<job>/ is simulated with the functional Verilog
 models of the sky130 standard cells and driven by tb/test_gemm_array.py, the
@@ -83,20 +86,30 @@ endmodule
 
 
 def main():
-    args = [a for a in sys.argv[1:] if a != "--pnr"]
+    args = [a for a in sys.argv[1:] if a not in ("--pnr", "--hier")]
     post_layout = "--pnr" in sys.argv[1:]
+    hier = "--hier" in sys.argv[1:]
     job = args[0] if args else "sys_4"
     m = re.fullmatch(r"sys_(\d+)(_nopipe)?(_ripple)?(?:_([sm])(\d+))?", job)
     if not m:
         sys.exit("only sys_N jobs are supported")
-    netlist = ROOT / "syn" / "build" / "asic" / job / "netlist.v"
+    build_dir = ROOT / "syn" / "build" / "asic"
+    netlists = [build_dir / job / "netlist.v"]
+    step = "run.py"
     if post_layout:
-        netlist = netlist.parent / "pnr" / "gemm_array.pnr.v"
-    if not netlist.exists():
-        step = "pnr.py" if post_layout else "run.py"
-        sys.exit(f"{netlist} not found: run syn/asic/{step} {job} first")
+        netlists = [build_dir / job / "pnr" / "gemm_array.pnr.v"]
+        step = "pnr.py"
+    if hier:
+        variant = job[job.index("_", 4):] if job.count("_") > 1 else ""
+        netlists = [build_dir / job / "pnr_hier" / "gemm_array.pnr.v",
+                    build_dir / f"pe{variant}" / "macro" / "gemm_pe.pnr.v"]
+        step = "pnr.py"
+    for netlist in netlists:
+        if not netlist.exists():
+            sys.exit(f"{netlist} not found: run syn/asic/{step} first")
 
-    build = ROOT / "sim_build" / f"gls_{job}{'_pnr' if post_layout else ''}"
+    tag = "_pnr" if post_layout else "_hier" if hier else ""
+    build = ROOT / "sim_build" / f"gls_{job}{tag}"
     build.mkdir(parents=True, exist_ok=True)
     wrapper = build / "gemm_array_gls.v"
     wrapper.write_text(WRAPPER.format(n=m.group(1), pipe=0 if m.group(2) else 1,
@@ -105,7 +118,7 @@ def main():
 
     runner = get_runner("icarus")
     runner.build(
-        sources=[CELLS / "primitives.v", CELLS / "sky130_fd_sc_hd.v", netlist, wrapper],
+        sources=[CELLS / "primitives.v", CELLS / "sky130_fd_sc_hd.v", *netlists, wrapper],
         hdl_toplevel="gemm_array_gls",
         defines={"FUNCTIONAL": 1, "UNIT_DELAY": ""},
         timescale=("1ns", "1ps"),

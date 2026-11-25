@@ -19,6 +19,16 @@ to syn/build/asic/<design>/pnr/. Jobs come in two kinds:
   * sys_N_est, bcast_N_est: a reduced flow for blocks too large for the full
     one here. Placement for wire length only, global routing only, timing with
     the wire estimates of global routing. Logs in .../pnr_est/.
+  * pe*_macro: the PE as a hard macro (pnr.tcl with PNR_MACRO=1), with pins
+    on matching tracks on opposite edges, an abstract (LEF) and timing models
+    (Liberty). Output in syn/build/asic/pe*/macro/.
+  * sys_N*_hier: the systolic array placed and routed hierarchically
+    (pnr_hier.tcl): N x N copies of the macro on a grid, the rest of the array
+    placed, routed and extracted around them. Timing at the end is a flat
+    analysis (sta_flat.tcl) with the netlists and extracted parasitics of the
+    top level and of every PE; "fmax_ss_model_mhz" is what the top level saw
+    through the timing models of the macro, combined with the paths inside the
+    macro. Output in syn/build/asic/sys_N*/pnr_hier/.
 
 Frequencies are 1000 / (period - slack) of the worst register-to-register
 path; hold slack is the worst over all paths and corners.
@@ -30,6 +40,14 @@ factor of two. PERIOD is a target the slow corner misses by 10 - 20 %, so the
 numbers are what the tools reach when pushed, not what they were asked for.
 The faster variants get shorter periods, PERIOD_S8 and PERIOD_M4, chosen the
 same way.
+
+A macro is timed on its own, so its inputs and outputs need budgets: what
+part of the clock period the path from one PE to the next may spend on either
+side. Each PE output comes straight from a register; each input goes into the
+multiplier, which is the long part. MACRO_IN is the share of the period an
+input may assume is already used when it arrives (the clock-to-output time of
+the neighbour and the wire in between), MACRO_OUT the share an output has to
+leave to the neighbour. The two add up to one period.
 
 Two columns are sanity checks on the timing repair step, which was seen to
 insert long buffer chains (see pnr.tcl): "crit_path_bufs" counts the buffers on
@@ -70,10 +88,16 @@ PERIOD = 10.0     # ns, see above
 PERIOD_S8 = 7.0   # ns, for the variant with saved carries (_s8)
 PERIOD_M4 = 5.0   # ns, for the variant with the carry-save multiplier as well (_m4)
 HOLD_MARGIN = 0.1 # ns of hold slack that the repair before routing has to leave
+MACRO_IN = 0.3    # share of the period used before a macro input, see above
+MACRO_OUT = 0.7   # share of the period left after a macro output
+MACRO_HOLD = 0.3  # ns an output of a macro stays unchanged after the clock edge
+MACRO_CLK_SLEW = 0.5   # ns transition of the clock at a macro pin, see macro_constraints
+CHANNEL_X = 13.8  # um between macro columns (30 sites)
+CHANNEL_Y = 10.88 # um between macro rows (4 rows)
 
 FIELDS = ["job", "top", "placement", "routing", "util_target", "die_um2", "cell_um2", "util_pct", "period_ns",
           "fmax_tt_mhz", "fmax_ss_mhz", "fmax_ff_mhz", "crit_path_bufs", "buf_chain", "hold_slack_ns",
-          "skew_ns", "drc", "wire_um", "runtime_s"]
+          "skew_ns", "drc", "wire_um", "fmax_ss_model_mhz", "hold_in_ns", "runtime_s"]
 
 
 def jobs():
@@ -103,6 +127,13 @@ def jobs():
                                             pins=ARRAY_PINS, **est)
             out[f"bcast_{n}{sfx}_est"] = dict(top="gemm_array_bcast", design=f"bcast_{n}{sfx}",
                                               pins=BCAST_PINS, **est)
+        # Hierarchical flow: the PE hardened once, the array built from copies.
+        out[f"pe{sfx}_macro"] = dict(top="gemm_pe", design=f"pe{sfx}", util=55, period=period,
+                                     macro=True)
+        for n in (8, 16):
+            out[f"sys_{n}{sfx}_hier"] = dict(top="gemm_array", design=f"sys_{n}{sfx}", util=50,
+                                             period=period, hier=f"pe{sfx}_macro", rows=n, cols=n,
+                                             pins=ARRAY_PINS)
     return out
 
 
@@ -127,6 +158,80 @@ def constraints(src, work, period):
     sdc = re.sub(r"(set_(?:input|output)_delay\s+)([0-9.]+)",
                  lambda m: f"{m.group(1)}{float(m.group(2)) * scale:g}", sdc)
     (work / "constraints.sdc").write_text(sdc)
+
+
+def macro_constraints(src, work, period):
+    """Constraints of a macro: the clock, and the budgets of its inputs and
+    outputs (MACRO_IN, MACRO_OUT).
+
+    Hold is a contract between neighbours, MACRO_HOLD: every output stays
+    unchanged for at least that long after the clock edge (minimum output
+    delay -MACRO_HOLD), and every input may change that early (minimum input
+    delay MACRO_HOLD). The macro then repairs hold on its own short input
+    paths, such as the one from b_i to the register that forwards it. Left to
+    the top level, a hold buffer would have to go on the wire to b_i as a whole
+    and slow down the multiplier behind it as well.
+
+    The clock reaches the macro through the clock tree of the top level, with a
+    slow edge: 0.35 ns at the slow corner was measured at one of the macros of
+    the 8 x 8 array. Characterised with an ideal clock edge instead, the clock
+    tree inside the macro looked 0.15 ns faster than it is, and the timing
+    model hid a hold violation on a path from an input of the block. With
+    0.35 ns some of these paths were still 0.1 ns worse in the flat analysis
+    than through the models (the macros see different edges, the model has
+    one), so MACRO_CLK_SLEW is set above that. Paths between two macros do not
+    depend on it: the clock tree inside the macro delays launch and capture
+    alike."""
+    sdc = (src / "constraints.sdc").read_text()
+    keep = [l for l in sdc.splitlines() if not re.match(r"\s*(create_clock|set_(input|output)_delay)", l)]
+    data_in = 'set data_in [get_ports * -filter "direction == input && name != clk"]'
+    lines = [f"create_clock -name clk -period {period} [get_ports clk]", data_in,
+             f"set_input_delay  -max {MACRO_IN * period:g} -clock clk $data_in",
+             f"set_input_delay  -min {MACRO_HOLD:g} -clock clk $data_in",
+             f"set_output_delay -max {MACRO_OUT * period:g} -clock clk [all_outputs]",
+             f"set_output_delay -min {-MACRO_HOLD:g} -clock clk [all_outputs]",
+             f"set_input_transition {MACRO_CLK_SLEW:g} [get_ports clk]"]
+    lines += [l for l in keep if l.strip() and not l.startswith("set data_in")]
+    (work / "constraints.sdc").write_text("\n".join(lines) + "\n")
+
+
+def port_bits(netlist, module):
+    """Port name -> width of a module in a netlist."""
+    body = re.search(rf"^module {re.escape(module)}\(.*?^endmodule", netlist, flags=re.M | re.S).group(0)
+    widths = {}
+    for m in re.finditer(r"^\s*(?:input|output)\s+(?:\[(\d+):0\]\s+)?(\w+);", body, flags=re.M):
+        widths[m.group(2)] = int(m.group(1)) + 1 if m.group(1) else 1
+    return widths
+
+
+def pe_edges(netlist):
+    """Pin order per edge of the PE macro. A enters from the west and leaves
+    to the east, B from the north to the south, the shift chain from the south
+    to the north. Pin k of the west edge is level with pin k of the east edge,
+    pin k of the north edge above pin k of the south edge."""
+    w = port_bits(netlist, "gemm_pe")
+
+    def bits(name):
+        return [name] if w[name] == 1 else [f"{name}[{k}]" for k in range(w[name])]
+
+    edges = {
+        "left": ["a_valid_i", "shift_i"] + bits("a_i"),
+        "right": ["a_valid_o", "shift_o"] + bits("a_o"),
+        "top": bits("b_i") + bits("c_o"),
+        "bottom": bits("b_o") + bits("c_i") + ["clk", "rst_n"],
+    }
+    return " ".join(f"{e} {{{' '.join(pins)}}}" for e, pins in edges.items())
+
+
+def black_box(netlist, cell):
+    """The array netlist with the PE as a black box: the modules below the PE
+    are taken out, and its instances refer to the macro by name."""
+    pe = re.search(rf"^module (\S+\\{cell}) ", netlist, flags=re.M).group(1)
+    below = set(re.findall(r"^\s+(\S+\\gemm_mac\w*)\s", re.search(
+        rf"^module {re.escape(pe)} .*?^endmodule", netlist, flags=re.M | re.S).group(0), flags=re.M))
+    for name in [pe, *below]:
+        netlist = re.sub(rf"^module {re.escape(name)} .*?^endmodule\n", "", netlist, flags=re.M | re.S)
+    return netlist.replace(pe + " ", cell + " ")
 
 
 def path_buffers(text):
@@ -164,6 +269,10 @@ def longest_buffer_chain(netlist):
 def dirs(name, job):
     """Directory of the synthesised design and working directory of a job."""
     src = BUILD / job.get("design", name)
+    if job.get("macro"):
+        return src, src / "macro"
+    if job.get("hier"):
+        return src, src / "pnr_hier"
     return src, src / ("pnr_est" if name.endswith("_est") else "pnr")
 
 
@@ -173,21 +282,73 @@ def run(name, job, threads=4):
     if not (src / "netlist.v").exists():
         raise FileNotFoundError(f"run syn/asic/run.py {src.name} first")
     work.mkdir(exist_ok=True)
-    constraints(src, work, job.get("period", PERIOD))
+    period = job.get("period", PERIOD)
+    netlist = src / "netlist.v"
+    script = "pnr.tcl"
     env = dict(os.environ, PDK_ROOT=PDK_ROOT, PNR_TOP=job["top"],
-               PNR_NETLIST=str(src / "netlist.v"), PNR_SDC=str(work / "constraints.sdc"),
-               PNR_OUT=str(work), PNR_UTIL=str(job["util"]),
-               PNR_DENSITY=str(job.get("density", 0.6)),
-               PNR_DROUTE="1" if job.get("droute", True) else "0",
-               PNR_TIMING_PLACE="1" if job.get("timing_place", True) else "0",
-               PNR_HOLD_MARGIN=str(HOLD_MARGIN),
-               PNR_PINS=job["pins"])
+               PNR_SDC=str(work / "constraints.sdc"), PNR_OUT=str(work),
+               PNR_UTIL=str(job["util"]), PNR_DENSITY=str(job.get("density", 0.6)),
+               PNR_HOLD_MARGIN=str(HOLD_MARGIN))
+    if job.get("macro"):
+        macro_constraints(src, work, period)
+        env.update(PNR_MACRO="1", PNR_EDGES=pe_edges(netlist.read_text()))
+    else:
+        constraints(src, work, period)
+        env.update(PNR_PINS=job["pins"])
+    if job.get("hier"):
+        mjob = jobs()[job["hier"]]
+        mdir = dirs(job["hier"], mjob)[1]
+        if not (mdir / f"{mjob['top']}.lef").exists():
+            raise FileNotFoundError(f"run syn/asic/pnr.py {job['hier']} first")
+        bb = work / "netlist.v"
+        bb.write_text(black_box(netlist.read_text(), mjob["top"]))
+        netlist = bb
+        script = "pnr_hier.tcl"
+        # Hold from the block inputs is not repaired here, see sta_flat.tcl.
+        sdc = (work / "constraints.sdc").read_text()
+        (work / "constraints_top.sdc").write_text(sdc + "set_false_path -hold -from [all_inputs]\n")
+        env["PNR_SDC"] = str(work / "constraints_top.sdc")
+        env.update(PNR_MACRO_DIR=str(mdir), PNR_MACRO_CELL=mjob["top"],
+                   PNR_ROWS=str(job["rows"]), PNR_COLS=str(job["cols"]),
+                   PNR_CHANNEL_X=str(CHANNEL_X), PNR_CHANNEL_Y=str(CHANNEL_Y))
+    else:
+        env.update(PNR_DROUTE="1" if job.get("droute", True) else "0",
+                   PNR_TIMING_PLACE="1" if job.get("timing_place", True) else "0")
+    env["PNR_NETLIST"] = str(netlist)
     t0 = time.time()
     with open(work / "pnr.log", "w") as f:
         subprocess.run(["openroad", "-no_init", "-exit", "-threads", str(threads),
-                        str(HERE / "pnr.tcl")],
+                        str(HERE / script)],
                        stdout=f, stderr=subprocess.STDOUT, env=env, check=True)
+    if job.get("macro"):
+        timing_models(job, work)
+    if job.get("hier"):
+        sta_flat(job, work, mdir, mjob["top"])
     return time.time() - t0
+
+
+def timing_models(job, work):
+    """Timing models of a macro, one per corner, see etm.tcl."""
+    for corner in ("tt", "ss", "ff"):
+        env = dict(os.environ, PDK_ROOT=PDK_ROOT, ETM_TOP=job["top"], ETM_CORNER=corner,
+                   ETM_DIR=str(work))
+        with open(work / f"etm_{corner}.log", "w") as f:
+            subprocess.run(["sta", "-no_init", "-exit", str(HERE / "etm.tcl")],
+                           stdout=f, stderr=subprocess.STDOUT, env=env, check=True)
+
+
+def sta_flat(job, work, mdir, cell):
+    """Flat timing analysis of a hierarchical job, see sta_flat.tcl."""
+    env = dict(os.environ, PDK_ROOT=PDK_ROOT, STA_TOP=job["top"],
+               STA_SDC=str(work / "constraints.sdc"),
+               STA_TOP_V=str(work / f"{job['top']}.pnr.v"),
+               STA_TOP_SPEF=str(work / f"{job['top']}.spef"),
+               STA_MACRO_V=str(mdir / f"{cell}.pnr.v"),
+               STA_MACRO_SPEF=str(mdir / f"{cell}.spef"),
+               STA_MACRO_CELL=cell)
+    with open(work / "sta_flat.log", "w") as f:
+        subprocess.run(["sta", "-no_init", "-exit", str(HERE / "sta_flat.tcl")],
+                       stdout=f, stderr=subprocess.STDOUT, env=env, check=True)
 
 
 def parse(name, job, runtime=None):
@@ -201,21 +362,43 @@ def parse(name, job, runtime=None):
         runtime = int(m.group(1)) if m else None
 
     period = float(re.search(r"-period\s+([0-9.]+)", (work / "constraints.sdc").read_text()).group(1))
-    fmax = {c: 1000 / (period - slack(section(log, f"setup_r2r {c}"))) for c in ("tt", "ss", "ff")}
-    bufs = max(path_buffers(section(log, f"setup_r2r {c}")) for c in ("tt", "ss", "ff"))
+    model = ""
+    timing = log
+    if job.get("hier"):
+        # Paths between macros as the top level saw them through the timing
+        # models, and paths inside the macro from the macro's own run.
+        mjob = jobs()[job["hier"]]
+        mlog = (dirs(job["hier"], mjob)[1] / "pnr.log").read_text()
+        worst = min(slack(section(log, "setup_r2r ss")), slack(section(mlog, "setup_r2r ss")))
+        model = f"{1000 / (period - worst):.0f}"
+        timing = (work / "sta_flat.log").read_text()
+        if "SECTION end" not in timing:
+            raise RuntimeError("flat timing analysis stopped early")
+    fmax = {c: 1000 / (period - slack(section(timing, f"setup_r2r {c}"))) for c in ("tt", "ss", "ff")}
+    bufs = max(path_buffers(section(timing, f"setup_r2r {c}")) for c in ("tt", "ss", "ff"))
     chain = longest_buffer_chain((work / f"{job['top']}.pnr.v").read_text())
-    hold = min(slack(section(log, f"hold_all {c}")) for c in ("tt", "ss", "ff"))
+    # Hierarchical jobs: hold between registers; the paths from the block
+    # inputs are reported separately (hold_in), see sta_flat.tcl.
+    hold_sec = "hold_r2r" if job.get("hier") else "hold_all"
+    hold = min(slack(section(timing, f"{hold_sec} {c}")) for c in ("tt", "ss", "ff"))
+    hold_in = (f"{min(slack(section(timing, f'hold_in {c}')) for c in ('tt', 'ss', 'ff')):.3f}"
+               if job.get("hier") else "")
     area = re.search(r"Design area\s+([0-9.]+)\s+\S+\s+([0-9.]+)%", section(log, "area"))
     die = re.search(r"DIEAREA \( (\d+) (\d+) \) \( (\d+) (\d+) \)",
                     (work / f"{job['top']}.def").read_text())
     die_um2 = (int(die.group(3)) - int(die.group(1))) * (int(die.group(4)) - int(die.group(2))) / 1e6
-    skew = re.search(r"^\s*(-?[0-9.]+)\s+setup skew", section(log, "clock skew"), flags=re.M)
+    skew = re.search(r"^\s*(-?[0-9.]+)\s+setup skew", section(timing, "clock skew"), flags=re.M)
     wire = re.findall(r"Total wire length = (\d+) um", log)
     routed = job.get("droute", True)
+    placement = "timing" if job.get("timing_place", True) else "wire length"
+    if job.get("macro"):
+        placement = "timing, macro"
+    elif job.get("hier"):
+        placement = "timing, hierarchical"
     drc = (work / "drc.rpt").read_text().count("violation type:") if routed else ""
     return dict(
         job=name, top=job["top"],
-        placement="timing" if job.get("timing_place", True) else "wire length",
+        placement=placement,
         routing="detailed" if routed else "global",
         util_target=job["util"],
         die_um2=f"{die_um2:.0f}",
@@ -229,6 +412,8 @@ def parse(name, job, runtime=None):
         skew_ns=skew.group(1) if skew else "",
         drc=drc,
         wire_um=wire[-1] if wire else "",
+        fmax_ss_model_mhz=model,
+        hold_in_ns=hold_in,
         runtime_s="" if runtime is None else f"{runtime:.0f}",
     )
 
