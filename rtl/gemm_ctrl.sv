@@ -81,7 +81,6 @@ module gemm_ctrl #(
     logic [MW-1:0] prev_m_q;
 
     logic [MW-1:0] row_q;      // shift beat counter, 0 .. ROWS-1
-    logic [KW-1:0] k_rem_q;    // operand beats left in this tile
     logic [MW-1:0] wait_q;     // idle cycle counter
     logic [CW-1:0] credit_q;   // free output FIFO slots not yet promised
 
@@ -96,7 +95,7 @@ module gemm_ctrl #(
     state_e          state_n;
     logic            pend_valid_n, cur_valid_n, prev_valid_n, cur_has_d_n;
     logic [MW-1:0]   cur_m_n, prev_m_n, row_n, wait_n;
-    logic [KW-1:0]   cur_k_n, k_rem_n;
+    logic [KW-1:0]   cur_k_n;
     logic [CW-1:0]   credit_n;
 
     logic need_d_q;       // this shift beat preloads a D row
@@ -104,8 +103,7 @@ module gemm_ctrl #(
     logic last_row_q;     // ... the last one of the drained tile
     logic credit_ok_q;    // a FIFO slot is free
     logic shift_last_q;   // this shift beat is the last of the phase
-    logic k_last_q;       // this operand beat is the last of the tile
-    logic k_last_n;
+    logic k_last_q;       // this operand beat is the last of the tile (u_kcnt)
 
     // ------------------------------------------------------------------
     // Beat decisions
@@ -167,7 +165,6 @@ module gemm_ctrl #(
         prev_valid_n = prev_valid_q;
         prev_m_n     = prev_m_q;
         row_n        = row_q;
-        k_rem_n      = k_rem_q;
         wait_n       = wait_q;
 
         case (state_q)
@@ -176,7 +173,6 @@ module gemm_ctrl #(
                     if (shift_last_q) begin
                         row_n        = '0;
                         prev_valid_n = 1'b0;
-                        k_rem_n      = cur_k_q;
                         if (cur_valid_q) state_n = S_MAC;
                         else             state_n = S_IDLE;
                     end else begin
@@ -186,7 +182,6 @@ module gemm_ctrl #(
             end
             S_MAC: begin
                 if (mac_fire) begin
-                    k_rem_n = k_rem_q - 1'b1;
                     if (k_last_q) begin
                         wait_n  = MW'(ROWS - 2);
                         state_n = S_WAIT;
@@ -211,19 +206,20 @@ module gemm_ctrl #(
         if (cmd_take) pend_valid_n = 1'b1;
     end
 
-    // k_last_q is (k_rem_q == 1). Its next value is chosen from comparisons
-    // of the candidates for k_rem_n, made in parallel, rather than compared
-    // after k_rem_n has been chosen: the choice depends on d_valid_i and
-    // ab_valid_i, and a comparison of 11 bits behind it was the longest path
-    // of the placed chip.
-    always_comb begin
-        k_last_n = k_last_q;                                     // k_rem unchanged
-        case (state_q)
-            S_SHIFT: if (shift_fire && shift_last_q) k_last_n = (cur_k_q == KW'(1));
-            S_MAC:   if (mac_fire)                   k_last_n = (k_rem_q == KW'(2));
-            default: ;
-        endcase
-    end
+    // Operand beats left in the tile: only "the last one" is needed, so it is
+    // a gemm_dcnt counter, loaded with the tile depth when the shift phase
+    // before the tile ends. In the placed chip both a plain 11-bit decrement
+    // (5 OR gates deep) and the comparison of its result with 1 behind the
+    // beat decision were the longest path. k_last_q is only read in S_MAC,
+    // which is entered through that load.
+    gemm_dcnt #(.W(KW)) u_kcnt (
+        .clk     (clk),
+        .load_i  (in_shift && shift_fire && shift_last_q),
+        .value_i (cur_k_q),
+        .reload_i(1'b0),
+        .dec_i   (mac_fire),
+        .last_o  (k_last_q)
+    );
 
     always_ff @(posedge clk) begin
         if (!rst_n) begin
@@ -232,25 +228,21 @@ module gemm_ctrl #(
             cur_valid_q   <= 1'b0;
             prev_valid_q  <= 1'b0;
             row_q         <= '0;
-            k_rem_q       <= '0;
             wait_q        <= '0;
             need_d_q      <= 1'b0;
             need_credit_q <= 1'b0;
             shift_last_q  <= (ROWS == 1);   // row_q is 0
-            k_last_q      <= 1'b0;
         end else begin
             state_q      <= state_n;
             pend_valid_q <= pend_valid_n;
             cur_valid_q  <= cur_valid_n;
             prev_valid_q <= prev_valid_n;
             row_q        <= row_n;
-            k_rem_q      <= k_rem_n;
             wait_q       <= wait_n;
 
             need_d_q      <= cur_valid_n && cur_has_d_n && (row_n < cur_m_n);
             need_credit_q <= prev_valid_n && (row_n < prev_m_n);
             shift_last_q  <= (row_n == MW'(ROWS - 1));
-            k_last_q      <= k_last_n;
         end
         // Not reset: only read while the flags above say they are valid.
         cur_m_q     <= cur_m_n;

@@ -75,8 +75,8 @@ MAC_CS = rtl("gemm_mac_cs")
 CPA = rtl("gemm_cpa")
 PE = rtl("gemm_mac", "gemm_pe")
 ARRAY = rtl("gemm_mac", "gemm_cpa", "gemm_pe", "gemm_array")
-CORE = ARRAY + rtl("gemm_delay", "gemm_fifo", "gemm_ctrl", "gemm_core")
-TOP = CORE + rtl("gemm_tile_iter", "gemm_dcnt", "gemm_load", "gemm_seq", "gemm_out", "gemm_csr", "gemm_top")
+CORE = ARRAY + rtl("gemm_delay", "gemm_fifo", "gemm_dcnt", "gemm_ctrl", "gemm_core")
+TOP = CORE + rtl("gemm_tile_iter", "gemm_load", "gemm_seq", "gemm_out", "gemm_csr", "gemm_top")
 BCAST = rtl("gemm_mac", "gemm_cpa") + [ROOT / "syn" / "common" / "gemm_array_bcast.sv"]
 MEM_BB = HERE / "gemm_mem_blackbox.sv"
 # The complete chip: operand memories from sky130 SRAM macros (OpenRAM).

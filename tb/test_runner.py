@@ -19,6 +19,7 @@ ARRAY_SOURCES = MAC_SOURCES + [RTL / "gemm_pe.sv", RTL / "gemm_array.sv"]
 CORE_SOURCES = ARRAY_SOURCES + [
     RTL / "gemm_delay.sv",
     RTL / "gemm_fifo.sv",
+    RTL / "gemm_dcnt.sv",
     RTL / "gemm_ctrl.sv",
     RTL / "gemm_core.sv",
 ]
@@ -26,7 +27,6 @@ CORE_SOURCES = ARRAY_SOURCES + [
 TOP_SOURCES = CORE_SOURCES + [
     RTL / "gemm_mem.sv",
     RTL / "gemm_tile_iter.sv",
-    RTL / "gemm_dcnt.sv",
     RTL / "gemm_load.sv",
     RTL / "gemm_seq.sv",
     RTL / "gemm_out.sv",
