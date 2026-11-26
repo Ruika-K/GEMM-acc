@@ -192,6 +192,34 @@ def primitives(build, init):
     return path
 
 
+def nonblocking_outputs(build, init):
+    """The cell library with the outputs of every flip-flop and latch updated
+    in the non-blocking region, as `<=` in RTL, and starting at `init`.
+
+    In a zero-delay netlist a clock tree is a chain of buffers, one delta
+    cycle each, and a flip-flop changes its output in the same region in
+    which the clock is still travelling: a register whose clock passes fewer
+    buffers than the next one's changes its output before the next one (or
+    an SRAM) samples it. The hand-built PE clock tree has 6 buffers to a
+    flip-flop, the register tree 8 - 10. With the outputs updated after the
+    whole tree has settled, every register samples the values from before the
+    edge, whatever the depth of its tree. (A delay on the outputs would do
+    that too, but the test bench, like the RTL, expects them to change at the
+    edge.)
+    """
+    text = (CELLS / "sky130_fd_sc_hd.v").read_text()
+    text, n = re.subn(r"^(\s*)buf(\s+)(\w+)\s*\(\s*Q\s*,\s*buf_Q\s*\);",
+                      rf"\1reg q_nba = 1'b{init};\n\1always @(buf_Q) q_nba <= buf_Q;\n\1buf\2\3 (Q, q_nba);",
+                      text, flags=re.M)
+    text, m = re.subn(r"^(\s*)not(\s+)(\w+)\s*\(\s*Q_N\s*,\s*buf_Q\s*\);", r"\1not\2\3 (Q_N, q_nba);",
+                      text, flags=re.M)
+    if n == 0:
+        raise RuntimeError("no flip-flop outputs found in the cell library")
+    path = build / "sky130_fd_sc_hd.v"
+    path.write_text(text)
+    return path
+
+
 def chip(job, init):
     """Gate-level simulation of the routed chip: top-level netlist, PE macro
     netlist and the OpenRAM simulation models of the SRAM macros, driven by
@@ -218,16 +246,10 @@ def chip(job, init):
         models.append(dst)
     runner = get_runner("icarus")
     runner.build(
-        sources=[primitives(build, init), CELLS / "sky130_fd_sc_hd.v", *netlists, *models,
+        sources=[primitives(build, init), nonblocking_outputs(build, init), *netlists, *models,
                  build / "gemm_top_gls.v"],
         hdl_toplevel="gemm_top_gls",
-        # Flip-flops and latches (the only cells that use UNIT_DELAY) change
-        # their output 50 ps after the clock edge; all other cells have no
-        # delay. Without it, a clock tree is a chain of zero-delay buffers and
-        # a register whose clock passes fewer buffers than the next one's
-        # changes its output before the next one samples: the hand-built PE
-        # tree has 6 buffers to a flip-flop, the register tree 8 - 10.
-        defines={"FUNCTIONAL": 1, "UNIT_DELAY": "#0.05"},
+        defines={"FUNCTIONAL": 1, "UNIT_DELAY": ""},
         timescale=("1ns", "1ps"),
         build_dir=build,
         always=True,
