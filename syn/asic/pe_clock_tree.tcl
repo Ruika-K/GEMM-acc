@@ -12,8 +12,10 @@
 #                        between the PEs, PE clock pins moved onto them. The
 #                        root is left unconnected, so the synthesis builds the
 #                        trees of the registers and of the SRAMs only.
-#   pe_htree_connect     after it: the root is driven from the clock port
-#                        through a chain of buffers, lengthened until the
+#   pe_htree_connect     after it: the root is driven from the net the PE
+#                        clock pins were on (the clock port, or the output of
+#                        the clock gate of the datapath) through a chain of
+#                        buffers, lengthened until the
 #                        flip-flops inside the PEs (pin arrival plus the clock
 #                        tree inside the macro) see the clock a set time after
 #                        the registers that talk to the array (useful skew:
@@ -79,6 +81,10 @@ proc pe_htree_level {cell r0 c0 n net_in} {
 
 proc pe_htree_build {cell n} {
     if {$n < 2 || ($n & ($n - 1)) != 0} { error "pe_htree_build: $n x $n is not a power of two" }
+    # The net the PE clock pins are on in the netlist: the clock port, or the
+    # output of the clock gate of the core datapath. The tree is driven from
+    # it, so the PEs stay behind the gate.
+    set ::pe_htree_src [[[pe_htree_inst $cell 0 0] findITerm clk] getNet]
     set ::pe_htree_nets {}
     set ::pe_htree_in [pe_htree_net pe_cnet_in]
     set root [pe_htree_level $cell 0 0 $n $::pe_htree_in]
@@ -103,17 +109,27 @@ proc pe_htree_arrivals {cell} {
 # internal: latency of the clock tree inside a PE at the slow corner (from its
 # timing model). late: how much later than the registers around the array the
 # flip-flops inside the PEs get the clock, slow corner.
-proc pe_htree_connect {cell clk_port internal late} {
-    set bt [$::block findBTerm $clk_port]
-    set port_net [$bt getNet]
-    set bb [$bt getBBox]
+proc pe_htree_connect {cell internal late} {
+    set src $::pe_htree_src
     set root_in [lindex [$::pe_htree_in getITerms] 0]
     set root [$root_in getInst]
-    # A driver next to the clock port, the long wire to the centre of the
-    # array, then the delay buffers next to the root.
-    set drv [pe_htree_buf pe_ctree_drv sky130_fd_sc_hd__clkbuf_16 \
-        [expr {([$bb xMin] + [$bb xMax]) / 2.0}] [expr {[$bb yMax] + 10000}]]
-    [$drv findITerm A] connect $port_net
+    # A driver next to the source of the clock (the port or the clock gate),
+    # the long wire to the centre of the array, then the delay buffers next to
+    # the root.
+    set bt [$src getBTerms]
+    if {[llength $bt] > 0} {
+        set bb [[lindex $bt 0] getBBox]
+        set x [expr {([$bb xMin] + [$bb xMax]) / 2.0}]
+        set y [expr {[$bb yMax] + 10000}]
+    } else {
+        foreach it [$src getITerms] { if {[$it isOutputSignal]} { set gate [$it getInst] } }
+        set bb [$gate getBBox]
+        set x [expr {([$bb xMin] + [$bb xMax]) / 2.0}]
+        set y [expr {([$bb yMin] + [$bb yMax]) / 2.0}]
+    }
+    puts "pe_htree_connect: tree driven from net [$src getName]"
+    set drv [pe_htree_buf pe_ctree_drv sky130_fd_sc_hd__clkbuf_16 $x $y]
+    [$drv findITerm A] connect $src
     [$drv findITerm X] connect $::pe_htree_in
     detailed_placement
     estimate_parasitics -placement

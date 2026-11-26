@@ -88,6 +88,17 @@ if {[llength $srams] > 0} {
         report_checks -corner $corner -path_delay min -digits 3 -to $sram_in
     }
 }
+# Enable of the clock gating cells (chip with CLOCK_GATING): a setup and a
+# hold check at the GATE pin against the clock at the cell.
+set gates [get_pins -quiet -of_objects [get_cells -quiet -hierarchical -filter "ref_name =~ sky130_fd_sc_hd__*dlclkp*"] -filter "lib_pin_name == GATE"]
+if {[llength $gates] > 0} {
+    foreach corner {tt ss ff} {
+        puts "SECTION setup_clock_gate $corner"
+        report_checks -corner $corner -path_delay max -digits 3 -to $gates
+        puts "SECTION hold_clock_gate $corner"
+        report_checks -corner $corner -path_delay min -digits 3 -to $gates
+    }
+}
 puts "SECTION clock skew"
 report_clock_skew
 # Clock arrival at the macros of the array, slow corner, taken at the root

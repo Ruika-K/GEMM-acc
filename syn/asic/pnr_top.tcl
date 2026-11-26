@@ -313,7 +313,7 @@ set_propagated_clock [all_clocks]
 repair_clock_nets
 detailed_placement
 estimate_parasitics -placement
-pe_htree_connect $mcell aclk $pe_internal $::env(PNR_PE_CLK_LATE)
+pe_htree_connect $mcell $pe_internal $::env(PNR_PE_CLK_LATE)
 # The SRAMs get the clock PNR_SRAM_CLK_EARLY before the registers around the
 # array (sram_clock.tcl): their read data has half a cycle, their inputs a
 # whole one.
