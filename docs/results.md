@@ -7,7 +7,7 @@ is the main target, and an FPGA implementation used as a prototype.
 |------|-------|
 | ASIC, sky130, synthesis and pre-layout timing | done |
 | ASIC, sky130, place and route of the array | done up to 16 x 16 (16 x 16 hierarchically, with the PE as a hard macro) |
-| ASIC, sky130, place and route of the complete chip | done: 8 x 8 array, SRAM macros, 9.7 mm2, 183 MHz at the slow corner |
+| ASIC, sky130, place and route of the complete chip | done: 8 x 8 array, SRAM macros, 9.7 mm2, 187 MHz at the slow corner |
 | FPGA, Lattice ECP5 (Yosys + nextpnr) | done |
 | FPGA, Xilinx Zynq-7000 (Vivado) | done |
 
@@ -624,23 +624,23 @@ an 8 x 8 array, `MUL_CS = 1`, `ACC_SEG = 4`, default memory sizes.
 | Die | 2.79 x 3.49 mm = 9.72 mm2 |
 | Macros | 64 PEs (0.90 mm2); 16 OpenRAM SRAMs (3.80 mm2): 4 x 2 KB each for A and B, 8 x 1 KB for the bias |
 | Standard cells | 21 900, 0.41 mm2: skew and de-skew lines, final adders, output FIFO, control, AXI |
-| Fmax between registers, typical / slow / fast | **358 / 183 / 539 MHz** |
-| Paths into and out of the SRAMs, slow corner, 5 ns | met (worst slack +0.03 ns), with the SRAMs' own times from their models (see below) |
-| Hold between registers | met at every corner, worst +0.035 ns |
+| Fmax between registers, typical / slow / fast | **373 / 187 / 541 MHz** |
+| Clock skew between neighbouring PEs, slow corner | 0.008 ns at most (hand-built H-tree, see below) |
+| Paths into and out of the SRAMs, slow corner, 5 ns | worst slack -0.20 ns, with the SRAMs' own times from their models (see below) |
+| Hold between registers | met at every corner, worst +0.149 ns |
 | Routing violations | 0 (the router's own check) |
 | Power grid | every instance connected to VPWR and VGND |
-| Run time | 24 minutes, plus 2 for the PE macro |
+| Run time | 20 minutes, plus 2 for the PE macro |
 | Gate-level simulation | the routed netlist with the SRAM models passes all 14 top-level tests, with every register starting at 0 and again at 1; cycle counts equal to the RTL |
 
-**Routed, the chip runs at 183 MHz at the slow corner, above the 161 MHz of
+**Routed, the chip runs at 187 MHz at the slow corner, above the 161 MHz of
 synthesis** (timing repair sizes up cells on the critical paths by more than
 the wires cost, as for the array alone). The array on its own reaches
-197 - 199 MHz. The difference is clock skew: the clock tree for the macros
-reaches 64 PEs and 32 SRAM clock pins spread over the chip, and on the
-critical path, from the forwarding register of one PE into the multiplier of
-the PE below it, the receiving PE gets its clock 0.55 ns before the sending
-one. The data part of that path is 4.6 ns, no longer than in the array alone
-(4.9 ns).
+197 - 199 MHz; inside the chip, the paths between PEs are as fast as that now
+(the worst is inside a single PE, the macro's own limit). What is slower are
+the paths into the array, from the registers of the skew lines into the
+multiplier of a PE on the edge (-0.36 ns), the control logic (-0.24 ns) and
+the SRAM read path (see below).
 
 Floorplan: the memories sit where their data goes. A (one operand per array
 row) is west of the array, with the macros of lanes 0 - 3 next to rows 0 - 3;
@@ -650,7 +650,73 @@ cells end up where the picture shows them: the output path (final adders,
 de-skew lines, output FIFO) along the north edge of the array, the AXI
 interfaces and the loader near the pins on the west edge.
 
-What the chip needed beyond the array:
+## Clock tree
+
+The first routed chip ran at 183 MHz, and the critical path went from the
+forwarding register of one PE into the multiplier of the PE below it, with
+the receiving PE getting its clock 0.55 ns before the sending one. The clock
+tree synthesis builds one tree for all macro clock pins: 64 PEs and 32 SRAM
+pins in three corners of the chip. That tree spans the die, its branches do
+not follow the PE grid, and it groups the PEs into clusters of up to 15 with
+different depths. Neighbouring PEs ended up on different branches, with steps
+of 0.3 - 0.5 ns along cluster boundaries.
+
+| Clock tree of the PEs, estimate before routing | Worst skew between neighbouring PEs, typical corner |
+|---|---|
+| One tree for all macros (as routed at 183 MHz) | 0.37 ns |
+| SRAMs on clock nets of their own, trees by the synthesis | 0.51 ns |
+| The same, SRAM nets left to one buffer each | 0.31 ns |
+| H-tree built by hand over the PE grid | 0.004 ns |
+
+The PEs now get an H-tree built by hand (`syn/asic/pe_clock_tree.tcl`): a
+buffer at the centre of the array, one at the centre of each quadrant, one at
+the centre of each 2 x 2 group, each driving four. All buffers sit on channel
+crossings, so every PE sees the same buffers and the same wire lengths. The
+PE clock pins are moved onto the tree before clock tree synthesis, with the
+root not yet connected, so the synthesis builds the trees of the registers
+and the SRAMs only. Then the root is driven from the clock port, with delay
+buffers in front of it until the flip-flops inside the PEs get the clock when
+the registers around the array do. The latency of the clock tree inside a PE
+comes from the macro's timing model (`max_clock_tree_path`, 0.77 ns at the
+slow corner). No delay buffer was needed: PE pins at 1.92 ns plus 0.77 ns,
+registers at 2.63 ns (median).
+
+After routing, the worst difference between neighbouring PEs is 0.008 ns and
+the chip runs at 187 instead of 183 MHz. The gain is small because the
+critical path moved:
+
+| Paths, slow corner | Worst slack |
+|---|---|
+| Between PEs and inside them | -0.03 ns (inside one PE) |
+| From registers outside the array into a PE | -0.36 ns |
+| From a PE to registers outside it (final adders) | +1.94 ns |
+| Control logic (`u_seq` to `u_ctrl`) | -0.24 ns |
+
+The worst path into a PE starts at a register of the skew lines, a small
+flip-flop that drives the wire into the PE itself (1.0 ns from clock to
+output), and that gets its clock 0.1 - 0.3 ns after the median of its tree.
+Clocking the PEs later on purpose did not help: with the PE flip-flops
+0.2 ns later (one delay buffer, `PE_CLK_LATE = 0.3` in `pnr.py`), this path
+got worse (-0.45 ns, 184 MHz), because the worst of these paths start at
+the registers that get the clock last. The PEs are lined up with the
+registers again.
+
+The SRAMs lost slack (+0.03 to -0.20 ns): in the shared tree they got the
+clock early, at 2.05 - 2.34 ns against 2.6 ns for the registers, and since
+the read data follows the falling edge, an early SRAM clock gave the read
+path more of its half cycle. In a tree of their own they are lined up with
+the registers. The paths into the SRAMs are tight as well (-0.05 ns, the
+read enable of B), so moving the SRAM clock alone does not fix both.
+
+The flat analysis now reports the clock arrival at every PE
+(`macro_skew_ss_ns`), and `pnr.py` rejects an analysis in which the
+parasitics of a net could not be read: the first version of the hand-built
+tree named each buffer and its output net alike, and OpenSTA, reading
+`name:12` in the SPEF as a pin of the instance, dropped the parasitics of 21
+clock nets (every PE then had exactly the same clock arrival).
+
+## What the chip needed beyond the array
+
 
 * **A registered end-of-row in the output stream.** The first routed chip ran
   at 157 MHz: deciding "last element of the row" in the output stream compared
@@ -694,8 +760,9 @@ edge, and the registers inside see the clock 2 - 3 ns later.
 ## Not done yet
 
 * Timing of the SRAM macros from a characterisation that can be trusted.
-* Clock tree of the chip: 0.55 ns of skew between neighbouring PEs costs 8 %
-  against the array alone.
+* The paths into the array from the skew lines (-0.36 ns at the slow corner),
+  the control logic (-0.24 ns) and the SRAM paths (-0.20 ns): the chip at
+  187 MHz against 197 - 199 MHz for the array alone.
 * The broadcast baseline at 16 x 16 in a full or hierarchical flow; the
   systolic array has both.
 * Hold from the inputs of the array and of the chip, which the hierarchical

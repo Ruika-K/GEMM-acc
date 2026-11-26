@@ -134,10 +134,21 @@ Needs the `sky130_sram_macros` library next to `sky130_fd_sc_hd` in the PDK
   around them (A west, B north, bias south), then routes everything. The
   timing models of the SRAMs have one corner, used for all three, and a
   maximum input transition of 0.04 ns that the flow removes from its copies
-  (`sram_libs()` in `pnr.py`). `PNR_RESUME=1` starts again from the
-  database saved before routing.
+  (`sram_libs()` in `pnr.py`). `PNR_RESUME=1` (or `route`) starts again from
+  the database saved before routing, `PNR_RESUME=cts` from the one saved
+  before the clock tree.
+* The PEs get a clock tree built by hand (`pe_clock_tree.tcl`): an H-tree
+  over the array with its buffers in the channels between the PEs, driven
+  from the clock port and lengthened until the flip-flops inside the PEs
+  (the macro's own clock tree from its timing model, `max_clock_tree_path`)
+  get the clock when the registers around the array do, plus `PE_CLK_LATE`
+  in `pnr.py`. OpenROAD's clock tree synthesis builds the trees of the
+  registers and of the SRAMs.
 * `sta_flat.tcl` reports the paths through the SRAMs apart from those between
-  registers (`sram_slack_ss_ns` in `pnr_results.csv`).
+  registers (`sram_slack_ss_ns` in `pnr_results.csv`), and the worst
+  difference in clock arrival between neighbouring PEs at the slow corner
+  (`macro_skew_ss_ns`, also for the hierarchical arrays). `pnr.py` rejects a
+  flat analysis in which parasitics could not be attached to a net.
 * `gls.py chip_8_m4` simulates the routed netlist with `tb/test_gemm_top.py`,
   once with every register starting at 0 and once at 1: registers the RTL
   does not reset start at X otherwise, and the netlist, unlike the RTL, keeps
