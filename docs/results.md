@@ -715,6 +715,15 @@ tree named each buffer and its output net alike, and OpenSTA, reading
 `name:12` in the SPEF as a pin of the instance, dropped the parasitics of 21
 clock nets (every PE then had exactly the same clock arrival).
 
+The gate-level simulation needed a change as well. Its cells have no delay,
+so a clock tree is a chain of delta cycles, and with the PEs on a tree of 6
+buffers and the other registers on trees of 8 - 10, a PE changed its outputs
+before the registers it feeds had sampled them: 12 of the 14 tests failed,
+with results shifted by a row. With every clock pin tied to the clock port
+the same netlist passed. `gls.py` now uses a copy of the cell library in
+which flip-flop outputs change like a non-blocking assignment, after the
+whole clock tree has settled.
+
 ## What the chip needed beyond the array
 
 

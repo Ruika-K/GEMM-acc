@@ -152,7 +152,11 @@ Needs the `sky130_sram_macros` library next to `sky130_fd_sc_hd` in the PDK
 * `gls.py chip_8_m4` simulates the routed netlist with `tb/test_gemm_top.py`,
   once with every register starting at 0 and once at 1: registers the RTL
   does not reset start at X otherwise, and the netlist, unlike the RTL, keeps
-  an X that logic masks.
+  an X that logic masks. Its copy of the cell library updates the outputs of
+  flip-flops like a non-blocking assignment: with zero-delay cells a clock
+  tree is a chain of delta cycles, and a register on a shallower tree (the
+  PEs: 6 buffers, the other registers: 8 - 10) would otherwise change its
+  output before a register on a deeper one samples it.
 
 ### Hierarchical flow
 
