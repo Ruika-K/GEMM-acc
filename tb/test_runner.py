@@ -154,7 +154,7 @@ TOP_SRAM_SOURCES = [s for s in TOP_SOURCES if s.name != "gemm_mem.sv"] + [
 def test_gemm_top_sram(rows, cols, pipe, depth, seg, mul_cs):
     params = top_params(rows, cols, pipe, depth, 0, seg, mul_cs)
     if mul_cs:
-        params["CPA_SEG"] = 8     # the chip as placed and routed
+        params.update(CPA_SEG=8, IN_PIPE=1)     # the chip as placed and routed
     simulate("gemm_top", TOP_SRAM_SOURCES, "test_gemm_top", params)
 
 
@@ -225,6 +225,14 @@ def test_gemm_core_mul_cs(rows, cols, pipe, depth, seg):
              core_params(rows, cols, pipe, depth, seg, 1))
 
 
+@pytest.mark.parametrize("rows,cols,pipe,depth,seg,mul_cs,in_pipe",
+                         [(4, 4, 1, 4, 4, 1, 1), (3, 5, 0, 2, 0, 0, 2)])
+def test_gemm_core_in_pipe(rows, cols, pipe, depth, seg, mul_cs, in_pipe):
+    """Extra register stages between the input registers and the array."""
+    simulate("gemm_core", CORE_SOURCES, "test_gemm_core",
+             {**core_params(rows, cols, pipe, depth, seg, mul_cs), "IN_PIPE": in_pipe})
+
+
 def top_params(rows, cols, pipe, depth, split, cs, mul_cs=0):
     return {"ROWS": rows, "COLS": cols, "PE_PIPE": pipe, "OUT_DEPTH": depth,
             "MEM_SPLIT": split, "ACC_SEG": cs, "MUL_CS": mul_cs}
@@ -240,11 +248,13 @@ def test_gemm_top_carry_save(rows, cols, pipe, depth, split, seg):
     simulate("gemm_top", TOP_SOURCES, "test_gemm_top", top_params(rows, cols, pipe, depth, split, seg))
 
 
-@pytest.mark.parametrize("rows,cols,pipe,depth,split,seg", [(4, 4, 1, 4, 0, 4), (8, 8, 1, 8, 0, 4)])
-def test_gemm_top_mul_cs(rows, cols, pipe, depth, split, seg):
-    # CPA_SEG = 8 as synthesised and placed (syn/asic/run.py, CPA_SEG_MUL).
+@pytest.mark.parametrize("rows,cols,pipe,depth,split,seg,in_pipe",
+                         [(4, 4, 1, 4, 0, 4, 0), (8, 8, 1, 8, 0, 4, 0), (8, 8, 1, 8, 0, 4, 1)])
+def test_gemm_top_mul_cs(rows, cols, pipe, depth, split, seg, in_pipe):
+    # CPA_SEG = 8 as synthesised and placed (syn/asic/run.py, CPA_SEG_MUL);
+    # IN_PIPE = 1 as in the chip.
     simulate("gemm_top", TOP_SOURCES, "test_gemm_top",
-             {**top_params(rows, cols, pipe, depth, split, seg, 1), "CPA_SEG": 8})
+             {**top_params(rows, cols, pipe, depth, split, seg, 1), "CPA_SEG": 8, "IN_PIPE": in_pipe})
 
 
 @pytest.mark.parametrize("rows,cols,pipe,cs,mul_cs", [c + (0,) for c in BCAST_CONFIGS]

@@ -34,7 +34,8 @@ module gemm_top #(
     parameter int B_DEPTH    = 1024,   // words of COLS elements
     parameter int BIAS_DEPTH = 64,     // words of COLS elements
     parameter int DIM_W      = 16,
-    parameter int MEM_SPLIT  = 0       // see gemm_mem: 1 = one RAM per lane
+    parameter int MEM_SPLIT  = 0,      // see gemm_mem: 1 = one RAM per lane
+    parameter int IN_PIPE    = 0       // see gemm_core: extra stages in front of the array
 ) (
     input  logic        aclk,
     input  logic        aresetn,      // synchronous, active low
@@ -270,7 +271,8 @@ module gemm_top #(
         .MUL_CS   (MUL_CS),
         .CPA_SEG  (CPA_SEG),
         .K_MAX    (K_MAX),
-        .OUT_DEPTH(OUT_DEPTH)
+        .OUT_DEPTH(OUT_DEPTH),
+        .IN_PIPE  (IN_PIPE)
     ) u_core (
         .clk        (aclk),
         .rst_n      (aresetn),

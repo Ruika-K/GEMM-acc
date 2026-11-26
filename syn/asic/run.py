@@ -157,8 +157,11 @@ def jobs():
         out[f"core_8{sfx}"] = dict(top="gemm_core", sources=CORE, params=size, abc="delay", **kw)
         out[f"top_8{sfx}"] = dict(top="gemm_top", sources=TOP + [MEM_BB], params=size,
                                   clock="aclk", abc="delay", **kw)
-        # The same with the SRAM macros, for place and route of the chip.
-        out[f"chip_8{sfx}"] = dict(top="gemm_top", sources=TOP + MEM_SRAM, params=size,
+        # The same with the SRAM macros, for place and route of the chip, and
+        # with a register stage of its own in front of the array (IN_PIPE, see
+        # gemm_core): placed, the input register of row 0 sat between the
+        # SRAM read port and the corner PE and was too far from both.
+        out[f"chip_8{sfx}"] = dict(top="gemm_top", sources=TOP + MEM_SRAM, params={**size, "IN_PIPE": 1},
                                    clock="aclk", abc="delay", libs=SRAM_LIBS, **kw)
 
     size = {"ROWS": 8, "COLS": 8}

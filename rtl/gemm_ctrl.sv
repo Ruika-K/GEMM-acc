@@ -105,6 +105,7 @@ module gemm_ctrl #(
     logic credit_ok_q;    // a FIFO slot is free
     logic shift_last_q;   // this shift beat is the last of the phase
     logic k_last_q;       // this operand beat is the last of the tile
+    logic k_last_n;
 
     // ------------------------------------------------------------------
     // Beat decisions
@@ -210,6 +211,20 @@ module gemm_ctrl #(
         if (cmd_take) pend_valid_n = 1'b1;
     end
 
+    // k_last_q is (k_rem_q == 1). Its next value is chosen from comparisons
+    // of the candidates for k_rem_n, made in parallel, rather than compared
+    // after k_rem_n has been chosen: the choice depends on d_valid_i and
+    // ab_valid_i, and a comparison of 11 bits behind it was the longest path
+    // of the placed chip.
+    always_comb begin
+        k_last_n = k_last_q;                                     // k_rem unchanged
+        case (state_q)
+            S_SHIFT: if (shift_fire && shift_last_q) k_last_n = (cur_k_q == KW'(1));
+            S_MAC:   if (mac_fire)                   k_last_n = (k_rem_q == KW'(2));
+            default: ;
+        endcase
+    end
+
     always_ff @(posedge clk) begin
         if (!rst_n) begin
             state_q       <= S_IDLE;
@@ -235,7 +250,7 @@ module gemm_ctrl #(
             need_d_q      <= cur_valid_n && cur_has_d_n && (row_n < cur_m_n);
             need_credit_q <= prev_valid_n && (row_n < prev_m_n);
             shift_last_q  <= (row_n == MW'(ROWS - 1));
-            k_last_q      <= (k_rem_n == KW'(1));
+            k_last_q      <= k_last_n;
         end
         // Not reset: only read while the flags above say they are valid.
         cur_m_q     <= cur_m_n;

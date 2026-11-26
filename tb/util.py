@@ -28,6 +28,14 @@ def random_matrix(rng, shape, width, mode="random"):
     )
 
 
+def in_pipe(dut):
+    """Extra register stages in front of the array (gemm_core IN_PIPE; 0 where absent)."""
+    try:
+        return int(dut.IN_PIPE.value)
+    except AttributeError:
+        return 0
+
+
 def cpa_latency(dut):
     """Cycles the final adders add to the array outputs (0 without saved carries)."""
     seg, acc_w = int(dut.ACC_SEG.value), int(dut.ACC_W.value)

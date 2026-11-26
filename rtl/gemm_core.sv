@@ -32,7 +32,8 @@ module gemm_core #(
     parameter int MUL_CS    = 0,      // 1: multiplier without a final adder, see gemm_mac_cs
     parameter int CPA_SEG   = 16,     // ACC_SEG > 0: segment width of the final adders
     parameter int K_MAX     = 1024,
-    parameter int OUT_DEPTH = ROWS    // output FIFO depth in rows
+    parameter int OUT_DEPTH = ROWS,   // output FIFO depth in rows
+    parameter int IN_PIPE   = 0       // extra register stages between the input registers and the array
 ) (
     input  logic                              clk,
     input  logic                              rst_n,
@@ -135,8 +136,13 @@ module gemm_core #(
 
     // ------------------------------------------------------------------
     // Skew: row i of A by i cycles, column j of B by j cycles, column j of D
-    // by j + PE_PIPE cycles (the cycle in which that column shifts).
+    // by j + PE_PIPE cycles (the cycle in which that column shifts). IN_PIPE
+    // adds the same number of stages to every line, and to shift and tag,
+    // so that row 0 and column 0 get a register of their own next to the
+    // array: without it, the input register of row 0 both takes the operand
+    // from the memory and drives the multiplier of the corner PE.
     // ------------------------------------------------------------------
+    logic                         shift_d;
     logic [ROWS-1:0]              av_skew;
     logic [ROWS-1:0][DATA_W-1:0]  a_skew;
     logic [COLS-1:0][DATA_W-1:0]  b_skew;
@@ -144,22 +150,25 @@ module gemm_core #(
 
     generate
         for (genvar i = 0; i < ROWS; i++) begin : g_a_skew
-            gemm_delay #(.WIDTH(1), .STAGES(i), .RESET(1)) u_av (
+            gemm_delay #(.WIDTH(1), .STAGES(i + IN_PIPE), .RESET(1)) u_av (
                 .clk(clk), .rst_n(rst_n), .d_i(av_q[i]), .q_o(av_skew[i])
             );
-            gemm_delay #(.WIDTH(DATA_W), .STAGES(i), .RESET(0)) u_a (
+            gemm_delay #(.WIDTH(DATA_W), .STAGES(i + IN_PIPE), .RESET(0)) u_a (
                 .clk(clk), .rst_n(rst_n), .d_i(a_q[i]), .q_o(a_skew[i])
             );
         end
         for (genvar j = 0; j < COLS; j++) begin : g_bd_skew
-            gemm_delay #(.WIDTH(DATA_W), .STAGES(j), .RESET(0)) u_b (
+            gemm_delay #(.WIDTH(DATA_W), .STAGES(j + IN_PIPE), .RESET(0)) u_b (
                 .clk(clk), .rst_n(rst_n), .d_i(b_q[j]), .q_o(b_skew[j])
             );
-            gemm_delay #(.WIDTH(ACC_W), .STAGES(j + PE_PIPE), .RESET(0)) u_d (
+            gemm_delay #(.WIDTH(ACC_W), .STAGES(j + PE_PIPE + IN_PIPE), .RESET(0)) u_d (
                 .clk(clk), .rst_n(rst_n), .d_i(d_q[j]), .q_o(d_skew[j])
             );
         end
     endgenerate
+    gemm_delay #(.WIDTH(1), .STAGES(IN_PIPE), .RESET(1)) u_shift (
+        .clk(clk), .rst_n(rst_n), .d_i(shift_q), .q_o(shift_d)
+    );
 
     // ------------------------------------------------------------------
     // Array
@@ -184,7 +193,7 @@ module gemm_core #(
         .a_valid_i(av_skew),
         .a_i      (a_skew),
         .b_i      (b_skew),
-        .shift_i  (shift_q),
+        .shift_i  (shift_d),
         .c_i      (d_skew),
         .c_valid_o(c_arr_valid),
         .c_o      (c_arr)
@@ -209,7 +218,7 @@ module gemm_core #(
         end
     endgenerate
 
-    gemm_delay #(.WIDTH(2), .STAGES(COLS - 1 + PE_PIPE + CPA_LAT), .RESET(1)) u_tag (
+    gemm_delay #(.WIDTH(2), .STAGES(COLS - 1 + PE_PIPE + CPA_LAT + IN_PIPE), .RESET(1)) u_tag (
         .clk(clk), .rst_n(rst_n), .d_i(tag_q), .q_o(tag_d)
     );
 

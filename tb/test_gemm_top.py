@@ -28,7 +28,7 @@ from gemm_host import (
     tile_order,
     untile,
 )
-from util import cpa_latency, random_matrix
+from util import cpa_latency, in_pipe, random_matrix
 
 CLK_NS = 10
 SEED = int(os.environ.get("TB_SEED", "1"))
@@ -291,6 +291,7 @@ async def throughput(dut):
     assert overhead >= 0
     if p.out_depth >= p.rows:
         # Preload of the first tile plus serialising the last one, plus the
-        # final adders at the north edge when carries are saved.
-        bound = p.rows * p.cols + p.rows + 8 + cpa_latency(dut)
+        # final adders at the north edge when carries are saved, plus the
+        # extra stages in front of the array.
+        bound = p.rows * p.cols + p.rows + 8 + cpa_latency(dut) + in_pipe(dut)
         assert overhead <= bound, f"overhead {overhead} > {bound}"

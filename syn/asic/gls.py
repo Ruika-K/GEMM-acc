@@ -100,7 +100,8 @@ module gemm_top_gls #(
     parameter BIAS_DEPTH = 64,
     parameter ACC_SEG    = {seg},
     parameter MUL_CS     = {mul},
-    parameter CPA_SEG    = {cpa}
+    parameter CPA_SEG    = {cpa},
+    parameter IN_PIPE    = 1
 ) (
     input         aclk,
     input         aresetn,
