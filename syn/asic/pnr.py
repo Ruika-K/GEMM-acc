@@ -101,11 +101,13 @@ CHANNEL_X = 13.8  # um between macro columns (30 sites; with 26, clock buffers
                   # found no room between the tap cells)
 CHANNEL_Y = 5.44  # um between macro rows (2 rows)
 # Chip: the PEs get the clock this much later than the registers around the
-# array (ns, slow corner). The paths into a PE start at a register outside the
-# array and end deep in the multiplier; the paths out of a PE end at the
-# registers of the final adder. With the clocks lined up, the first had -0.36 ns
-# and the second +1.94 ns of slack; hold had 0.35 / 0.17 ns at the fast corner.
-PE_CLK_LATE = 0.3
+# array (ns, slow corner). With the clocks lined up, the paths into the PEs had
+# -0.36 ns of slack and the paths out of them +1.94 ns, so 0.3 ns later looked
+# like free time. It was not (-0.45 ns, 184 instead of 187 MHz): the worst of
+# those paths start at the registers that get the clock last in their own tree,
+# 0.3 ns after the median, and a third of the path is the register driving the
+# wire into the PE.
+PE_CLK_LATE = 0.0
 
 FIELDS = ["job", "top", "placement", "routing", "util_target", "die_um2", "cell_um2", "util_pct", "period_ns",
           "fmax_tt_mhz", "fmax_ss_mhz", "fmax_ff_mhz", "crit_path_bufs", "buf_chain", "hold_slack_ns",
