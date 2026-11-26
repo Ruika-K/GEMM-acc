@@ -15,8 +15,10 @@
 #   pe_htree_connect     after it: the root is driven from the clock port
 #                        through a chain of buffers, lengthened until the
 #                        flip-flops inside the PEs (pin arrival plus the clock
-#                        tree inside the macro) see the clock when the
-#                        registers that talk to the array do.
+#                        tree inside the macro) see the clock a set time after
+#                        the registers that talk to the array (useful skew:
+#                        the paths into the PEs are long, the paths out of
+#                        them short).
 # ------------------------------------------------------------------------------
 
 proc pe_htree_inst {cell row col} {
@@ -99,8 +101,9 @@ proc pe_htree_arrivals {cell} {
 }
 
 # internal: latency of the clock tree inside a PE at the slow corner (from its
-# timing model, pnr.py passes it).
-proc pe_htree_connect {cell clk_port internal} {
+# timing model). late: how much later than the registers around the array the
+# flip-flops inside the PEs get the clock, slow corner.
+proc pe_htree_connect {cell clk_port internal late} {
     set bt [$::block findBTerm $clk_port]
     set port_net [$bt getNet]
     set bb [$bt getBBox]
@@ -117,9 +120,10 @@ proc pe_htree_connect {cell clk_port internal} {
     set k 0
     while 1 {
         lassign [pe_htree_arrivals $cell] pe reg lo hi
-        set gap [expr {$reg - $pe - $internal}]
-        puts [format "pe_htree_connect: %d delay buffers, PE pins %.3f (%.3f .. %.3f) + %.2f inside, registers %.3f, gap %.3f" \
-            $k $pe $lo $hi $internal $reg $gap]
+        # Delay still to add in front of the root.
+        set gap [expr {$reg + $late - $pe - $internal}]
+        puts [format "pe_htree_connect: %d delay buffers, PE pins %.3f (%.3f .. %.3f) + %.2f inside, registers %.3f + %.2f, gap %.3f" \
+            $k $pe $lo $hi $internal $reg $late $gap]
         if {$gap < 0.08 || $k >= 16} break
         set it [$root findITerm A]
         set net [$it getNet]

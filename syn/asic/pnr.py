@@ -100,6 +100,12 @@ MACRO_CLK_SLEW = 0.5   # ns transition of the clock at a macro pin, see macro_co
 CHANNEL_X = 13.8  # um between macro columns (30 sites; with 26, clock buffers
                   # found no room between the tap cells)
 CHANNEL_Y = 5.44  # um between macro rows (2 rows)
+# Chip: the PEs get the clock this much later than the registers around the
+# array (ns, slow corner). The paths into a PE start at a register outside the
+# array and end deep in the multiplier; the paths out of a PE end at the
+# registers of the final adder. With the clocks lined up, the first had -0.36 ns
+# and the second +1.94 ns of slack; hold had 0.35 / 0.17 ns at the fast corner.
+PE_CLK_LATE = 0.3
 
 FIELDS = ["job", "top", "placement", "routing", "util_target", "die_um2", "cell_um2", "util_pct", "period_ns",
           "fmax_tt_mhz", "fmax_ss_mhz", "fmax_ff_mhz", "crit_path_bufs", "buf_chain", "hold_slack_ns",
@@ -325,7 +331,8 @@ def run(name, job, threads=4):
                    PNR_CHANNEL_X=str(CHANNEL_X), PNR_CHANNEL_Y=str(CHANNEL_Y))
         if job.get("chip"):
             script = "pnr_top.tcl"
-            env.update(PNR_SRAM_LEFS=" ".join(str(SRAM_REF / "lef" / f"{m}.lef") for m in SRAM_MACROS),
+            env.update(PNR_PE_CLK_LATE=str(PE_CLK_LATE),
+                       PNR_SRAM_LEFS=" ".join(str(SRAM_REF / "lef" / f"{m}.lef") for m in SRAM_MACROS),
                        PNR_SRAM_LIBS=" ".join(str(f) for f in sram_libs(work)))
     else:
         env.update(PNR_DROUTE="1" if job.get("droute", True) else "0",

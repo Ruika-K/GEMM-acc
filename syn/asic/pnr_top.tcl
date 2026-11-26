@@ -11,6 +11,8 @@
 #   PNR_ROWS, PNR_COLS, PNR_CHANNEL_X, PNR_CHANNEL_Y   the PE grid, as there
 #   PNR_SRAM_LEFS   abstracts of the SRAM macros (with obstructions, see pnr.py)
 #   PNR_SRAM_LIBS   their timing models (one corner, used for all three)
+#   PNR_PE_CLK_LATE ns the flip-flops in the PEs get the clock after the
+#                   registers around the array (slow corner, see pnr.py)
 #   PNR_RESUME      optional: cts starts again from the checkpoint written before
 #                   the clock tree, route (or 1) from the one before routing
 #
@@ -290,9 +292,9 @@ stage "clock tree"
 # synthesis, which builds one tree for all macros, the PEs came out in groups
 # with 0.3 - 0.5 ns between neighbours. The synthesis builds the trees of the
 # registers and of the SRAMs; the PE tree is then driven from the clock port
-# and delayed until the flip-flops inside the PEs line up with the registers
-# around the array, at the slow corner. The clock tree inside a PE is taken
-# from its timing model.
+# and delayed until the flip-flops inside the PEs get the clock PNR_PE_CLK_LATE
+# after the registers around the array, at the slow corner. The clock tree
+# inside a PE is taken from its timing model.
 if {$rows != $cols} { error "the PE clock tree needs a square array" }
 source [file join [file dirname [info script]] pe_clock_tree.tcl]
 set fh [open [file join $mdir ${mcell}_ss.lib]]
@@ -309,7 +311,7 @@ set_propagated_clock [all_clocks]
 repair_clock_nets
 detailed_placement
 estimate_parasitics -placement
-pe_htree_connect $mcell aclk $pe_internal
+pe_htree_connect $mcell aclk $pe_internal $::env(PNR_PE_CLK_LATE)
 
 # ------------------------------------------------------------------------------
 stage "timing repair"
