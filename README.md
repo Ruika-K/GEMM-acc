@@ -28,7 +28,7 @@ OpenROAD):
   minutes. The price of hierarchy is 15 - 20 % die area.
 * The complete chip placed and routed: the 64 PE macros, 16 OpenRAM SRAM
   macros for the operand memories and 22 000 standard cells on 9.7 mm2,
-  **187 MHz at the slow corner** (373 MHz typical) between registers, no
+  **193 MHz at the slow corner** (373 MHz typical) between registers, no
   routing violations, gate-level simulation of the routed netlist with the
   SRAM models. The PEs get a clock tree built by hand, an H-tree over the
   grid: 0.008 ns of skew between neighbouring PEs, where the tool's tree had
@@ -54,11 +54,9 @@ OpenROAD):
   through the hand-written multiplier, and gate-level simulation of the
   synthesised and of the routed netlists.
 
-There are also FPGA prototypes: Lattice ECP5 with open tools (119 - 128 MHz
-for the complete accelerator, 132 - 138 MHz before the control logic was
-restructured for the ASIC) and Xilinx Zynq-7000 with Vivado (163 MHz, previous
-RTL). On
-both, the systolic array keeps its frequency as it grows and a broadcast array
+There are also FPGA prototypes: Lattice ECP5 with open tools (129 - 150 MHz
+for the complete accelerator) and Xilinx Zynq-7000 with Vivado (163 MHz,
+earlier RTL). On both, the systolic array keeps its frequency as it grows and a broadcast array
 with the same datapath does not: about 150 MHz against 138 -> 99 MHz on the
 ECP5 (4 x 4 to 12 x 12), 164 -> 158 MHz against 156 -> 139 MHz on the Zynq
 (4 x 4 to 16 x 16).

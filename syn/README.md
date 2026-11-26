@@ -143,7 +143,11 @@ Needs the `sky130_sram_macros` library next to `sky130_fd_sc_hd` in the PDK
   (the macro's own clock tree from its timing model, `max_clock_tree_path`)
   get the clock when the registers around the array do, plus `PE_CLK_LATE`
   in `pnr.py`. OpenROAD's clock tree synthesis builds the trees of the
-  registers and of the SRAMs.
+  registers and of the SRAMs; `sram_clock.tcl` then takes delay buffers out
+  of the chain at the root of the SRAM tree until the SRAMs get the clock
+  `SRAM_CLK_EARLY` before the registers (their read data has half a cycle).
+* The chip is synthesised with `IN_PIPE = 1` (a register stage of its own in
+  front of the array, see `docs/spec.md`).
 * `sta_flat.tcl` reports the paths through the SRAMs apart from those between
   registers (`sram_slack_ss_ns` in `pnr_results.csv`), and the worst
   difference in clock arrival between neighbouring PEs at the slow corner

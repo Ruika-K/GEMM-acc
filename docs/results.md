@@ -7,7 +7,7 @@ is the main target, and an FPGA implementation used as a prototype.
 |------|-------|
 | ASIC, sky130, synthesis and pre-layout timing | done |
 | ASIC, sky130, place and route of the array | done up to 16 x 16 (16 x 16 hierarchically, with the PE as a hard macro) |
-| ASIC, sky130, place and route of the complete chip | done: 8 x 8 array, SRAM macros, 9.7 mm2, 187 MHz at the slow corner |
+| ASIC, sky130, place and route of the complete chip | done: 8 x 8 array, SRAM macros, 9.7 mm2, 193 MHz at the slow corner |
 | FPGA, Lattice ECP5 (Yosys + nextpnr) | done |
 | FPGA, Xilinx Zynq-7000 (Vivado) | done |
 
@@ -623,24 +623,25 @@ an 8 x 8 array, `MUL_CS = 1`, `ACC_SEG = 4`, default memory sizes.
 |---|---|
 | Die | 2.79 x 3.49 mm = 9.72 mm2 |
 | Macros | 64 PEs (0.90 mm2); 16 OpenRAM SRAMs (3.80 mm2): 4 x 2 KB each for A and B, 8 x 1 KB for the bias |
-| Standard cells | 21 900, 0.41 mm2: skew and de-skew lines, final adders, output FIFO, control, AXI |
-| Fmax between registers, typical / slow / fast | **373 / 187 / 541 MHz** |
+| Standard cells | 22 300, 0.42 mm2: skew and de-skew lines, final adders, output FIFO, control, AXI |
+| Fmax between registers, typical / slow / fast | **373 / 193 / 573 MHz** |
 | Clock skew between neighbouring PEs, slow corner | 0.008 ns at most (hand-built H-tree, see below) |
-| Paths into and out of the SRAMs, slow corner, 5 ns | worst slack -0.20 ns, with the SRAMs' own times from their models (see below) |
-| Hold between registers | met at every corner, worst +0.149 ns |
+| Paths into and out of the SRAMs, slow corner, 5 ns | worst slack -0.01 ns, with the SRAMs' own times from their models (see below) |
+| Hold between registers | met at every corner, worst +0.137 ns |
 | Routing violations | 0 (the router's own check) |
 | Power grid | every instance connected to VPWR and VGND |
-| Run time | 22 minutes, plus 2 for the PE macro |
+| Run time | 24 minutes, plus 2 for the PE macro |
 | Gate-level simulation | the routed netlist with the SRAM models passes all 14 top-level tests, with every register starting at 0 and again at 1; cycle counts equal to the RTL |
 
-**Routed, the chip runs at 187 MHz at the slow corner, above the 161 MHz of
+**Routed, the chip runs at 193 MHz at the slow corner, above the 162 MHz of
 synthesis** (timing repair sizes up cells on the critical paths by more than
 the wires cost, as for the array alone). The array on its own reaches
-197 - 199 MHz; inside the chip, the paths between PEs are as fast as that now
-(the worst is inside a single PE, the macro's own limit). What is slower are
-the paths into the array, from the registers of the skew lines into the
-multiplier of a PE on the edge (-0.36 ns), the control logic (-0.24 ns) and
-the SRAM read path (see below).
+197 - 199 MHz; inside the chip, the paths between PEs are as fast as that
+(the worst is inside a single PE, the macro's own limit). The rest of the
+gap is in the paths into the array (-0.19 ns), from registers that get the
+clock 0.2 ns after the PEs, and in the control logic (-0.17 ns). How the
+chip got from 183 to 193 MHz: the clock tree of the PEs (183 to 187 MHz) and
+the paths around the array (187 to 193 MHz), below.
 
 Floorplan: the memories sit where their data goes. A (one operand per array
 row) is west of the array, with the macros of lanes 0 - 3 next to rows 0 - 3;
@@ -724,6 +725,55 @@ the same netlist passed. `gls.py` now uses a copy of the cell library in
 which flip-flop outputs change like a non-blocking assignment, after the
 whole clock tree has settled.
 
+## Around the array
+
+With the clock tree in place, three groups of paths were slower than the
+array. In the order they were fixed:
+
+| Change | Slow corner | Worst path after it |
+|---|---|---|
+| Clock tree of the PEs (above) | 187 MHz | into a corner PE, -0.36 ns |
+| A register stage in front of the array (`IN_PIPE`) and `k_last` from parallel comparisons | 180 MHz | the D enable, -0.56 ns |
+| D masked after its register; SRAM clock 0.35 ns early | 186 MHz | a counter in the controller, -0.39 ns |
+| Operand beats left in a tile as a split down-counter | **193 MHz** | into a PE, -0.19 ns |
+
+* **A register stage of its own in front of the array** (`IN_PIPE = 1` in
+  `gemm_core`, the chip only; the default is 0). Row 0 of A and column 0 of
+  B have no skew stage, so their input register both took the operand from
+  the SRAM (through three multiplexers, in half a cycle) and drove the
+  multiplier of the corner PE. Placed between the two, it was too far from
+  both. The extra stage goes on every skew line and on the shift and tag
+  lines, so the array sees the same timing, one cycle later; the credit
+  based flow control does not depend on the latency. 395 flip-flops, 1 % of
+  the cell area.
+* **D masked after its register.** Whether a shift beat takes a row of D
+  depends on the valid of the D stream; that decision was the enable and
+  select of 256 flip-flops, a buffer tree across the chip, and once the
+  layout had moved, the longest path (-0.56 ns). D is now registered in
+  every cycle and masked per column after the register (`dm_q`), so the
+  decision reaches 8 flip-flops. The array reads its D inputs only in the
+  cycle the shift arrives.
+* **SRAM clock earlier than the registers** (`SRAM_CLK_EARLY = 0.35` in
+  `pnr.py`, `syn/asic/sram_clock.tcl`). The read data of an SRAM comes after
+  the falling edge, so the paths out of it have half a cycle and the paths
+  into it a whole one, but clock tree synthesis lines the SRAM pins up with
+  the registers, with two delay buffers at the root of their tree. The flow
+  takes one of them out after clock tree synthesis: the SRAM pins get the
+  clock at 2.19 ns (median, slow corner) instead of 2.54 ns, the registers
+  at 2.61 ns. Paths out of the SRAMs went from -0.25 to -0.01 ns, paths
+  into them from +0.41 to +0.37 ns (they had gained from the extra stage).
+* **The controller's tile depth counter.** `k_last` ("last operand beat of
+  the tile") first came from comparing the next value of the remaining
+  count with 1, after the beat decision had chosen that value; then from
+  parallel comparisons; then the 11-bit decrement itself was the longest
+  path (five OR gates, 0.9 - 1.0 ns each at the slow corner). The count is
+  now a `gemm_dcnt` split down-counter, as in the loader.
+
+Making the PEs later than the registers did not help here either: the
+registers that drive the PE inputs come out of a register tree with
+0.4 ns between its earliest and its latest leaves, and the late ones set the
+paths into the array.
+
 ## What the chip needed beyond the array
 
 
@@ -769,9 +819,9 @@ edge, and the registers inside see the clock 2 - 3 ns later.
 ## Not done yet
 
 * Timing of the SRAM macros from a characterisation that can be trusted.
-* The paths into the array from the skew lines (-0.36 ns at the slow corner),
-  the control logic (-0.24 ns) and the SRAM paths (-0.20 ns): the chip at
-  187 MHz against 197 - 199 MHz for the array alone.
+* The last 2 - 3 % against the array alone (193 against 197 - 199 MHz): the
+  paths into the array from registers late in the register clock tree
+  (-0.19 ns) and the control logic (-0.17 ns).
 * The broadcast baseline at 16 x 16 in a full or hierarchical flow; the
   systolic array has both.
 * Hold from the inputs of the array and of the chip, which the hierarchical
@@ -895,19 +945,24 @@ given as worst - best seed.
 
 | Metric | Value |
 |--------|-------|
-| Fmax | 119 - 128 MHz (three seeds; eight seeds: 112 - 141) |
-| LUT4 | 4412 |
-| Flip-flops | 8379 |
+| Fmax | 129 - 150 MHz (three seeds) |
+| LUT4 | 4611 |
+| Flip-flops | 8390 |
 | 18 x 18 multiplier blocks | 64 (one per PE) |
 | 18 kbit block RAM | 16 (A: 4, B: 4, bias: 8) |
 | Distributed RAM cells | 65 (output FIFO) |
 
-Throughput at the best of the three seeds (128.1 MHz), one multiply-accumulate
+Throughput at the best of the three seeds (150.0 MHz), one multiply-accumulate
 counted as two operations:
 
-* peak: 64 MAC per cycle = 8.2 GMAC/s = 16.4 GOP/s
+* peak: 64 MAC per cycle = 9.6 GMAC/s = 19.2 GOP/s
 * measured on a 32 x 72 x 32 multiplication (16 full tiles, 1469 cycles in
-  simulation): 50.2 MAC per cycle = 6.4 GMAC/s = 12.9 GOP/s
+  simulation): 50.2 MAC per cycle = 7.5 GMAC/s = 15.1 GOP/s
+
+With the controller and D path of the ASIC chip work (D masked after its
+register, the tile depth as a split down-counter) the ECP5 numbers went from
+119 - 128 MHz and 4412 LUT4 to 129 - 150 MHz and 4611 LUT4, same seeds, same
+cycle counts. Vivado has not been run on this RTL.
 
 Where the flip-flops go (from a separate synthesis run that keeps the
 hierarchy; it totals more than the flat design because nothing is optimised

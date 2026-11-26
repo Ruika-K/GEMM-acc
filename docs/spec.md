@@ -158,12 +158,17 @@ All beats are registered once at the core boundary and then delayed:
 
 | Path | Delay (cycles) |
 |------|----------------|
-| A, row `i` (data and valid) | `i` |
-| B, column `j` | `j` |
-| D, column `j` | `j + PE_PIPE` |
-| shift control | 0 |
+| A, row `i` (data and valid) | `i + IN_PIPE` |
+| B, column `j` | `j + IN_PIPE` |
+| D, column `j` | `j + PE_PIPE + IN_PIPE` |
+| shift control | `IN_PIPE` |
 | C, column `j` (after the array) | `COLS - 1 - j` |
-| result tag (valid, last) | `COLS - 1 + PE_PIPE`, plus the latency of the final adders if `ACC_SEG > 0` |
+| result tag (valid, last) | `COLS - 1 + PE_PIPE + IN_PIPE`, plus the latency of the final adders if `ACC_SEG > 0` |
+
+`IN_PIPE` (default 0) adds the same number of stages to every line, so that
+row 0 and column 0 get a register next to the array that does not also take
+the operand from the memory; the chip uses 1. D is registered in every cycle
+and masked per column after its register, by whether the shift beat takes D.
 
 Data delay lines have no reset so that FPGA tools can map them onto
 shift-register LUTs. Only the 1-bit valid and tag lines are reset.
@@ -253,6 +258,7 @@ which gives one beat per cycle without an extra skid buffer.
 | `CPA_SEG`    | 16      | With `ACC_SEG > 0`: bits added per cycle by the final adders |
 | `K_MAX`      | 1024    | Largest K, sizes the K counter |
 | `OUT_DEPTH`  | `ROWS`  | Output FIFO depth in rows |
+| `IN_PIPE`    | 0       | Extra register stages between the input registers and the array (2.3) |
 | `A_DEPTH`    | 1024    | A memory depth, words of `ROWS` elements |
 | `B_DEPTH`    | 1024    | B memory depth, words of `COLS` elements |
 | `BIAS_DEPTH` | 64      | Bias memory depth, words of `COLS` elements |
