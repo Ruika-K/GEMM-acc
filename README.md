@@ -34,6 +34,12 @@ OpenROAD):
   grid: 0.008 ns of skew between neighbouring PEs, where the tool's tree had
   0.55 ns. The SRAMs' own timing comes from models that cannot be trusted,
   so the paths through them are reported apart.
+* Power from simulated activity: a gate-level simulation of the routed chip
+  writes the switching of every net, OpenSTA turns it into power with the
+  extracted parasitics. **35 - 49 pJ per multiply-accumulate** at the typical
+  corner (the range is the SRAM models, which charge an access whether a
+  macro is selected or not); idle, the chip still draws 67 - 80 % of that,
+  nearly all of it in the clock.
 * The two steps that got it there from 89 MHz, both found by following the
   critical path. First the accumulator: it saves a carry every few bits
   instead of propagating it through 32 (`ACC_SEG`, 121 MHz). Then the

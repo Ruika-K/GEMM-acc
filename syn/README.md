@@ -162,6 +162,26 @@ Needs the `sky130_sram_macros` library next to `sky130_fd_sc_hd` in the PDK
   PEs: 6 buffers, the other registers: 8 - 10) would otherwise change its
   output before a register on a deeper one samples it.
 
+### Power
+
+```bash
+python3 syn/asic/power.py chip_8_m4                 # compute and idle workloads
+python3 syn/asic/power.py chip_8_m4 idle --keep-vcd # one workload, keep the VCD file
+```
+
+Needs the routed chip (`pnr.py chip_8_m4`). For each workload of
+`tb/test_gemm_power.py`, `gls.py` simulates the routed netlist and the chip
+wrapper writes a VCD file from the moment the test raises `dump_on` (vvp
+needs `-vcd` instead of cocotb's `-none` for that: `IcarusVcd` in `gls.py`).
+`power.tcl` reads it with the routed netlists and parasitics as
+`sta_flat.tcl` does and reports power at the typical corner: with OpenSTA's
+default activity, with the simulated one, per block (PE macros, SRAMs, clock
+buffers of the top level), and the duty of the SRAM chip selects, from which
+`power.py` works out the SRAM power counted only when selected. Results in
+`power_results.csv`, reports in `syn/build/asic/chip_8_m4/pnr/power/`. The
+VCD files (hundreds of MB) are deleted after the analysis unless
+`--keep-vcd` is given.
+
 ### Hierarchical flow
 
 For the 16 x 16 arrays the full flow runs hierarchically: the PE is placed,

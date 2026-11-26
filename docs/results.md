@@ -8,6 +8,7 @@ is the main target, and an FPGA implementation used as a prototype.
 | ASIC, sky130, synthesis and pre-layout timing | done |
 | ASIC, sky130, place and route of the array | done up to 16 x 16 (16 x 16 hierarchically, with the PE as a hard macro) |
 | ASIC, sky130, place and route of the complete chip | done: 8 x 8 array, SRAM macros, 9.7 mm2, 193 MHz at the slow corner |
+| ASIC, sky130, power of the chip from simulated activity | done: 35 - 49 pJ per multiply-accumulate; idle at 67 - 80 % of full load |
 | FPGA, Lattice ECP5 (Yosys + nextpnr) | done |
 | FPGA, Xilinx Zynq-7000 (Vivado) | done |
 
@@ -833,9 +834,63 @@ edge, and the registers inside see the clock 2 - 3 ns later.
 * Booth recoding of the multiplier, which would halve the number of partial
   product rows.
 * Sign-off checks: DRC and LVS with the foundry decks, IR drop, antenna.
-* Power: OpenSTA's default switching activity is not meaningful for a design
-  that idles most of its control logic; it needs activity from simulation.
-* Clock gating. Most registers have an enable.
+* Clock gating. Most registers have an enable; idle, the chip draws 67 - 80 %
+  of its power under full load (see Power).
+* Power of the SRAMs from models that know whether a macro is selected.
+
+# ASIC: power of the chip
+
+Flow: `syn/asic/power.py chip_8_m4`. A gate-level simulation of the routed
+netlist (`gls.py`) runs a workload of `tb/test_gemm_power.py` and writes the
+switching activity of every net to a VCD file, for the window to be measured
+only; OpenSTA (`power.tcl`) reads it together with the routed netlists and the
+extracted parasitics of the top level and of every PE, and reports power at
+the typical corner. Numbers in `syn/asic/power_results.csv`.
+
+* **compute**: a 32 x 72 x 32 multiplication with random int8 operands and a
+  bias (16 full tiles, 73 728 multiply-accumulates, 1474 cycles), from START
+  until the last result has been read.
+* **idle**: 1000 cycles with the clock running and nothing to do.
+
+The simulation clock is 10 ns: the OpenRAM simulation models put the read
+data 3 ns after the falling edge, which a 5 ns clock does not leave room for.
+Power is therefore given at 100 MHz. Dynamic power scales with the frequency
+(leakage is 0.2 mW); at the 193 MHz of the slow corner it would be 1.9 times
+as much. Energy per operation does not depend on the frequency.
+
+The SRAM models charge the energy of a full access on every clock edge,
+whether the macro is selected or not (the internal power of the clock pins
+has the same value for every state of chip select and write enable). Real
+SRAMs draw little when not selected. The SRAM power is therefore given twice:
+as the models say, and counted only in the cycles in which a port is selected
+(from the duty of its chip select in the simulation). The truth is in
+between, closer to the second.
+
+| 100 MHz, typical corner | compute | idle |
+|---|---|---|
+| Total, SRAMs as modelled / only when selected | **243 / 177 mW** | 194 / 119 mW |
+| PE array (64 macros, their own clock trees included) | 85.6 mW | 42.7 mW |
+| SRAMs, as modelled / only when selected | 75.1 / 8.8 mW | 75.1 / 0 mW |
+| Clock tree of the top level | 43.1 mW | 43.1 mW |
+| Everything else (skew lines, final adders, FIFO, control, AXI) | 39.5 mW | 33.1 mW |
+| Energy per multiply-accumulate | **48.8 / 35.5 pJ** | |
+| Efficiency (2 operations per multiply-accumulate) | 0.041 / 0.056 TOPS/W | |
+| OpenSTA's default activity instead (inputs toggle in 10 % of cycles) | 196 mW | 196 mW |
+
+* **Idle, the chip draws 80 % (67 % without the unselected SRAMs) of its
+  power under full load.** Idle, nothing switches but the clock: the clock
+  pins of 19 000 flip-flops (54 mW), the clock trees, and the clock pins of
+  the SRAMs. Computing adds 49 - 58 mW of data switching on top. Most
+  registers have an enable already, so clock gating can take much of the
+  idle power away; it is the next step.
+* **The PE array spends 17 pJ per multiply-accumulate, half of it (8.6 pJ)
+  on the clock** (the PE power idle, times the time of the run).
+* **The default activity gives one number for both cases**, 20 % below full
+  load and well above the idle chip without SRAMs: a design that idles most
+  of its logic needs activity from simulation.
+* Random int8 operands toggle about half of the operand bits every cycle;
+  neural network data, with many zeros and small values, toggles less, so
+  the compute figures are an upper end for the datapath.
 
 # FPGA prototype: Xilinx Zynq-7000 (Vivado)
 
