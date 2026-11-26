@@ -630,7 +630,7 @@ an 8 x 8 array, `MUL_CS = 1`, `ACC_SEG = 4`, default memory sizes.
 | Hold between registers | met at every corner, worst +0.149 ns |
 | Routing violations | 0 (the router's own check) |
 | Power grid | every instance connected to VPWR and VGND |
-| Run time | 20 minutes, plus 2 for the PE macro |
+| Run time | 22 minutes, plus 2 for the PE macro |
 | Gate-level simulation | the routed netlist with the SRAM models passes all 14 top-level tests, with every register starting at 0 and again at 1; cycle counts equal to the RTL |
 
 **Routed, the chip runs at 187 MHz at the slow corner, above the 161 MHz of
