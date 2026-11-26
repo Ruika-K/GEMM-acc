@@ -10,8 +10,10 @@ For every workload of tb/test_gemm_power.py: a gate-level simulation of the
 routed netlist (syn/asic/gls.py, registers starting at 0) writes the switching
 activity of its window to a VCD file, and OpenSTA (power.tcl) turns it into
 power at the typical corner, with the extracted parasitics of the top level
-and of every PE. The simulation clock is the 5 ns of the constraints, so the
-numbers are for 200 MHz.
+and of every PE. The simulation clock is 10 ns (see tb/test_gemm_power.py), so
+the power is that at 100 MHz; dynamic power, nearly all of it, scales with
+the frequency, and the energy per multiply-accumulate (pJ/MAC) and TOPS/W do
+not depend on it.
 
 The SRAM models charge the energy of an access on every clock edge, whether
 the macro is selected or not. The SRAM power is therefore given twice: as

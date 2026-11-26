@@ -10,8 +10,10 @@ window is what OpenSTA turns into power.
               from START until the last result has been read and checked
     idle      the clock running, nothing to do: 1000 cycles after reset
 
-The clock period is that of the timing constraints (5 ns), so the power is
-the power at 200 MHz.
+The clock period is that of the other top-level tests (10 ns, 100 MHz): the
+OpenRAM simulation models put the read data 3 ns after the falling clock
+edge, which a 5 ns clock does not leave room for. Dynamic power scales with
+the clock frequency; energy per operation does not depend on it.
 """
 
 import json
@@ -27,7 +29,7 @@ from cocotb.utils import get_sim_time
 from gemm_host import Host
 from test_gemm_top import TopParams, operands, reference
 
-CLK_NS = float(os.environ.get("POWER_CLK_NS", "5"))
+CLK_NS = float(os.environ.get("POWER_CLK_NS", "10"))
 SEED = int(os.environ.get("TB_SEED", "1"))
 
 
