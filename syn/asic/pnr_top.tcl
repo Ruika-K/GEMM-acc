@@ -11,6 +11,8 @@
 #   PNR_ROWS, PNR_COLS, PNR_CHANNEL_X, PNR_CHANNEL_Y   the PE grid, as there
 #   PNR_SRAM_LEFS   abstracts of the SRAM macros (with obstructions, see pnr.py)
 #   PNR_SRAM_LIBS   their timing models (one corner, used for all three)
+#   PNR_RESUME      optional: cts starts again from the checkpoint written before
+#                   the clock tree, route (or 1) from the one before routing
 #
 # Floorplan, following the data (south at the bottom):
 #
@@ -56,9 +58,11 @@ proc stage {name} {
 # Round up to a multiple of grid.
 proc snap {v grid} { return [expr {$grid * ceil($v / $grid - 1e-6)}] }
 
-# PNR_RESUME=1 starts from the database saved before routing (<top>_placed.odb)
-# and only routes, extracts and reports.
-set resume [expr {[info exists ::env(PNR_RESUME)] && $::env(PNR_RESUME)}]
+# PNR_RESUME=cts starts from the database saved after placement
+# (<top>_pre_cts.odb), PNR_RESUME=route from the one saved before routing
+# (<top>_placed.odb).
+set resume [expr {[info exists ::env(PNR_RESUME)] ? $::env(PNR_RESUME) : ""}]
+if {$resume eq "1"} { set resume route }
 
 # ------------------------------------------------------------------------------
 stage "read design"
@@ -76,8 +80,10 @@ read_lef [file join $ref lef sky130_ef_sc_hd.lef]
 read_lef [file join $mdir $mcell.lef]
 foreach lef $::env(PNR_SRAM_LEFS) { read_lef $lef }
 
-if {$resume} {
+if {$resume eq "route"} {
     read_db [file join $out ${top}_placed.odb]
+} elseif {$resume eq "cts"} {
+    read_db [file join $out ${top}_pre_cts.odb]
 } else {
     read_verilog $::env(PNR_NETLIST)
     link_design $top
@@ -91,14 +97,18 @@ foreach f {no_synth.cells drc_exclude.cells} {
     close $fh
 }
 set_dont_use $dont_use
+# Wire models for the estimates before extraction (not kept in a checkpoint).
+set_wire_rc -signal -layer met2
+set_wire_rc -clock  -layer met5
 
-if {!$resume} {
-# ------------------------------------------------------------------------------
-stage "floorplan"
-# ------------------------------------------------------------------------------
 set db    [ord::get_db]
 set block [ord::get_db_block]
 set dbu   [$block getDbUnitsPerMicron]
+
+if {$resume eq ""} {
+# ------------------------------------------------------------------------------
+stage "floorplan"
+# ------------------------------------------------------------------------------
 proc size_of {name} {
     set m [[ord::get_db] findMaster $name]
     return [list [expr {double([$m getWidth]) / $::dbu}] [expr {double([$m getHeight]) / $::dbu}]]
@@ -265,22 +275,41 @@ pdngen
 # ------------------------------------------------------------------------------
 stage "placement"
 # ------------------------------------------------------------------------------
-set_wire_rc -signal -layer met2
-set_wire_rc -clock  -layer met5
-
 global_placement -density $density -timing_driven
 estimate_parasitics -placement
 repair_design
 detailed_placement
+write_db [file join $out ${top}_pre_cts.odb]
+}
 
+if {$resume ne "route"} {
 # ------------------------------------------------------------------------------
 stage "clock tree"
 # ------------------------------------------------------------------------------
+# The PEs get an H-tree built by hand (pe_clock_tree.tcl): left to clock tree
+# synthesis, which builds one tree for all macros, the PEs came out in groups
+# with 0.3 - 0.5 ns between neighbours. The synthesis builds the trees of the
+# registers and of the SRAMs; the PE tree is then driven from the clock port
+# and delayed until the flip-flops inside the PEs line up with the registers
+# around the array, at the slow corner. The clock tree inside a PE is taken
+# from its timing model.
+if {$rows != $cols} { error "the PE clock tree needs a square array" }
+source [file join [file dirname [info script]] pe_clock_tree.tcl]
+set fh [open [file join $mdir ${mcell}_ss.lib]]
+if {![regexp {timing_type : max_clock_tree_path;\s*cell_rise\(scalar\) \{\s*values\("([0-9.]+)"\)} [read $fh] -> pe_internal]} {
+    error "no max_clock_tree_path in the slow-corner model of $mcell"
+}
+close $fh
+pe_htree_build $mcell $rows
+detailed_placement
+
 clock_tree_synthesis -root_buf sky130_fd_sc_hd__clkbuf_16 \
     -buf_list {sky130_fd_sc_hd__clkbuf_8 sky130_fd_sc_hd__clkbuf_4 sky130_fd_sc_hd__clkbuf_2}
 set_propagated_clock [all_clocks]
 repair_clock_nets
 detailed_placement
+estimate_parasitics -placement
+pe_htree_connect $mcell aclk $pe_internal
 
 # ------------------------------------------------------------------------------
 stage "timing repair"
@@ -296,7 +325,7 @@ check_placement
 # ------------------------------------------------------------------------------
 stage "routing"
 # ------------------------------------------------------------------------------
-if {!$resume} { write_db [file join $out ${top}_placed.odb] }
+if {$resume ne "route"} { write_db [file join $out ${top}_placed.odb] }
 set_propagated_clock [all_clocks]
 set_routing_layers -signal met1-met5 -clock met3-met5
 # A few overflows next to the SRAM pins are left to detailed routing, which

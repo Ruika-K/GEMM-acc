@@ -103,7 +103,8 @@ CHANNEL_Y = 5.44  # um between macro rows (2 rows)
 
 FIELDS = ["job", "top", "placement", "routing", "util_target", "die_um2", "cell_um2", "util_pct", "period_ns",
           "fmax_tt_mhz", "fmax_ss_mhz", "fmax_ff_mhz", "crit_path_bufs", "buf_chain", "hold_slack_ns",
-          "skew_ns", "drc", "wire_um", "fmax_ss_model_mhz", "hold_in_ns", "sram_slack_ss_ns", "runtime_s"]
+          "skew_ns", "macro_skew_ss_ns", "drc", "wire_um", "fmax_ss_model_mhz", "hold_in_ns", "sram_slack_ss_ns",
+          "runtime_s"]
 
 
 def jobs():
@@ -426,6 +427,8 @@ def parse(name, job, runtime=None):
                     (work / f"{job['top']}.def").read_text())
     die_um2 = (int(die.group(3)) - int(die.group(1))) * (int(die.group(4)) - int(die.group(2))) / 1e6
     skew = re.search(r"^\s*(-?[0-9.]+)\s+setup skew", section(timing, "clock skew"), flags=re.M)
+    # Hierarchical jobs: worst clock skew between neighbouring macros of the array.
+    mskew = re.search(r"worst difference between neighbours ([0-9.]+) ns", timing) if job.get("hier") else None
     wire = re.findall(r"Total wire length = (\d+) um", log)
     routed = job.get("droute", True)
     placement = "timing" if job.get("timing_place", True) else "wire length"
@@ -448,6 +451,7 @@ def parse(name, job, runtime=None):
         buf_chain=chain,
         hold_slack_ns=f"{hold:.3f}",
         skew_ns=skew.group(1) if skew else "",
+        macro_skew_ss_ns=mskew.group(1) if mskew else "",
         drc=drc,
         wire_um=wire[-1] if wire else "",
         fmax_ss_model_mhz=model,
