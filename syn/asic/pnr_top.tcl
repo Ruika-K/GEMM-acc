@@ -13,6 +13,8 @@
 #   PNR_SRAM_LIBS   their timing models (one corner, used for all three)
 #   PNR_PE_CLK_LATE ns the flip-flops in the PEs get the clock after the
 #                   registers around the array (slow corner, see pnr.py)
+#   PNR_SRAM_CLK_EARLY ns the SRAM clock pins get the clock before those
+#                   registers (slow corner, see pnr.py)
 #   PNR_RESUME      optional: cts starts again from the checkpoint written before
 #                   the clock tree, route (or 1) from the one before routing
 #
@@ -312,6 +314,12 @@ repair_clock_nets
 detailed_placement
 estimate_parasitics -placement
 pe_htree_connect $mcell aclk $pe_internal $::env(PNR_PE_CLK_LATE)
+# The SRAMs get the clock PNR_SRAM_CLK_EARLY before the registers around the
+# array (sram_clock.tcl): their read data has half a cycle, their inputs a
+# whole one.
+source [file join [file dirname [info script]] sram_clock.tcl]
+sram_clock_early $::env(PNR_SRAM_CLK_EARLY)
+detailed_placement
 
 # ------------------------------------------------------------------------------
 stage "timing repair"

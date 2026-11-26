@@ -108,6 +108,13 @@ CHANNEL_Y = 5.44  # um between macro rows (2 rows)
 # 0.3 ns after the median, and a third of the path is the register driving the
 # wire into the PE.
 PE_CLK_LATE = 0.0
+# Chip: the SRAM clock pins get the clock this much earlier than the registers
+# around the array (ns, slow corner). Clock tree synthesis lines them up with
+# the registers, but the read data of an SRAM comes after the falling edge,
+# so the paths out of it have half a cycle and the paths into it a whole one.
+# With the SRAMs lined up, the paths out had -0.25 / +0.08 / +0.02 ns of slack
+# (A / B / bias) and the paths in +0.86 / +0.41 / +0.74 ns.
+SRAM_CLK_EARLY = 0.35
 
 FIELDS = ["job", "top", "placement", "routing", "util_target", "die_um2", "cell_um2", "util_pct", "period_ns",
           "fmax_tt_mhz", "fmax_ss_mhz", "fmax_ff_mhz", "crit_path_bufs", "buf_chain", "hold_slack_ns",
@@ -333,7 +340,7 @@ def run(name, job, threads=4):
                    PNR_CHANNEL_X=str(CHANNEL_X), PNR_CHANNEL_Y=str(CHANNEL_Y))
         if job.get("chip"):
             script = "pnr_top.tcl"
-            env.update(PNR_PE_CLK_LATE=str(PE_CLK_LATE),
+            env.update(PNR_PE_CLK_LATE=str(PE_CLK_LATE), PNR_SRAM_CLK_EARLY=str(SRAM_CLK_EARLY),
                        PNR_SRAM_LEFS=" ".join(str(SRAM_REF / "lef" / f"{m}.lef") for m in SRAM_MACROS),
                        PNR_SRAM_LIBS=" ".join(str(f) for f in sram_libs(work)))
     else:

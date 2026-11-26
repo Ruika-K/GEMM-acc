@@ -122,16 +122,26 @@ module gemm_core #(
         end
     end
 
+    // D is registered in every cycle and masked after the register, one mask
+    // bit per column: whether a shift beat takes D depends on the valid of
+    // the D stream, and as the enable and select of 256 flip-flops that
+    // decision was the longest path of the placed chip; now it reaches COLS
+    // flip-flops. The array reads c_i only in the cycle its shift arrives, so
+    // the zeros between shift beats are never seen.
+    logic [COLS-1:0]              dm_q;
+    logic [COLS-1:0][ACC_W-1:0]   d_m;
+
     always_ff @(posedge clk) begin
         if (beat_mac) begin
             a_q <= a_i;
             for (int j = 0; j < COLS; j++) b_q[j] <= col_en[j] ? b_i[j] : '0;
         end
-        if (beat_shift) begin
-            for (int j = 0; j < COLS; j++) begin
-                d_q[j] <= (beat_d_take && col_en[j]) ? d_i[j] : '0;
-            end
-        end
+        d_q <= d_i;
+        for (int j = 0; j < COLS; j++) dm_q[j] <= beat_shift && beat_d_take && col_en[j];
+    end
+
+    for (genvar j = 0; j < COLS; j++) begin : g_d_mask
+        assign d_m[j] = dm_q[j] ? d_q[j] : '0;
     end
 
     // ------------------------------------------------------------------
@@ -162,7 +172,7 @@ module gemm_core #(
                 .clk(clk), .rst_n(rst_n), .d_i(b_q[j]), .q_o(b_skew[j])
             );
             gemm_delay #(.WIDTH(ACC_W), .STAGES(j + PE_PIPE + IN_PIPE), .RESET(0)) u_d (
-                .clk(clk), .rst_n(rst_n), .d_i(d_q[j]), .q_o(d_skew[j])
+                .clk(clk), .rst_n(rst_n), .d_i(d_m[j]), .q_o(d_skew[j])
             );
         end
     endgenerate
