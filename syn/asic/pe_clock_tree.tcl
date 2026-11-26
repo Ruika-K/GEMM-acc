@@ -31,6 +31,9 @@ proc pe_htree_buf {name master x y} {
     return $b
 }
 
+# Nets are named apart from the buffers that drive them (pe_cnet_* and
+# pe_ctree_*): in a SPEF file "name:12" is a node of net "name" or pin 12 of
+# instance "name", and with both present OpenSTA drops the net's parasitics.
 proc pe_htree_net {name} {
     set n [odb::dbNet_create $::block $name]
     $n setSigType CLOCK
@@ -55,7 +58,7 @@ proc pe_htree_level {cell r0 c0 n net_in} {
     set name "pe_ctree_${n}_${r0}_${c0}"
     set b [pe_htree_buf $name [expr {$leaf ? "sky130_fd_sc_hd__clkbuf_8" : "sky130_fd_sc_hd__clkbuf_16"}] $x $y]
     [$b findITerm A] connect $net_in
-    set out [pe_htree_net $name]
+    set out [pe_htree_net pe_cnet_${n}_${r0}_${c0}]
     [$b findITerm X] connect $out
     lappend ::pe_htree_nets [$out getName]
     foreach dr [list 0 $h] {
@@ -75,9 +78,9 @@ proc pe_htree_level {cell r0 c0 n net_in} {
 proc pe_htree_build {cell n} {
     if {$n < 2 || ($n & ($n - 1)) != 0} { error "pe_htree_build: $n x $n is not a power of two" }
     set ::pe_htree_nets {}
-    set ::pe_htree_in [pe_htree_net pe_ctree_in]
+    set ::pe_htree_in [pe_htree_net pe_cnet_in]
     set root [pe_htree_level $cell 0 0 $n $::pe_htree_in]
-    lappend ::pe_htree_nets pe_ctree_in
+    lappend ::pe_htree_nets pe_cnet_in
     puts "pe_htree_build: [llength $::pe_htree_nets] nets, root [$root getName]"
     return $root
 }
@@ -121,7 +124,7 @@ proc pe_htree_connect {cell clk_port internal} {
         set it [$root findITerm A]
         set net [$it getNet]
         $it disconnect
-        set n [pe_htree_net pe_ctree_dly_$k]
+        set n [pe_htree_net pe_cnet_dly_$k]
         set b [odb::dbInst_create $::block [$::db findMaster sky130_fd_sc_hd__clkbuf_8] pe_ctree_dly_$k]
         [$b findITerm A] connect $net
         [$b findITerm X] connect $n

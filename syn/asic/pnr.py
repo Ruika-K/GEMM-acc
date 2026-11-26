@@ -408,6 +408,10 @@ def parse(name, job, runtime=None):
         timing = (work / "sta_flat.log").read_text()
         if "SECTION end" not in timing:
             raise RuntimeError("flat timing analysis stopped early")
+        # SPEF nodes that name no pin: the parasitics of those nets were dropped.
+        lost = len(re.findall(r"^Warning 1652: .* not found", timing, flags=re.M))
+        if lost:
+            raise RuntimeError(f"flat timing analysis: {lost} SPEF nodes not found, see sta_flat.log")
     fmax = {c: 1000 / (period - slack(section(timing, f"setup_r2r {c}"))) for c in ("tt", "ss", "ff")}
     bufs = max(path_buffers(section(timing, f"setup_r2r {c}")) for c in ("tt", "ss", "ff"))
     chain = longest_buffer_chain((work / f"{job['top']}.pnr.v").read_text())

@@ -90,15 +90,16 @@ if {[llength $srams] > 0} {
 }
 puts "SECTION clock skew"
 report_clock_skew
-# Clock arrival at the clock pins of the macros, slow corner: a macro passes
-# its results to its neighbours in the array in one cycle, so the difference
-# between neighbours is what counts.
+# Clock arrival at the macros of the array, slow corner, taken at the root
+# buffer of the clock tree inside each macro (the macro's clock pin is a
+# hierarchical pin here, without timing): a macro passes its results to its
+# neighbours in one cycle, so the difference between neighbours is what counts.
 puts "SECTION macro clock"
 report_checks -corner ss -path_delay max -format end -group_path_count 1 > /dev/null
 set arr [dict create]
 foreach inst [get_cells -filter "ref_name == $::env(STA_MACRO_CELL)"] {
     if {[regexp {g_row\[(\d+)\]\.g_col\[(\d+)\]} [get_full_name $inst] -> i j]} {
-        dict set arr $i,$j [get_property [get_pins [get_full_name $inst]/clk] arrival_max_rise]
+        dict set arr $i,$j [get_property [get_pins [get_full_name $inst]/clkbuf_0_clk/A] arrival_max_rise]
     }
 }
 if {[dict size $arr] > 0} {
@@ -110,7 +111,7 @@ if {[dict size $arr] > 0} {
         }
     }
     set v [dict values $arr]
-    puts [format "macro clock pins: %d, arrival %.3f .. %.3f ns, worst difference between neighbours %.3f ns" \
+    puts [format "macro clock roots: %d, arrival %.3f .. %.3f ns, worst difference between neighbours %.3f ns" \
         [llength $v] [tcl::mathfunc::min {*}$v] [tcl::mathfunc::max {*}$v] $worst]
 }
 puts "SECTION end"
