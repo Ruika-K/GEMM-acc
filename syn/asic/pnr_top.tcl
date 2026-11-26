@@ -307,8 +307,11 @@ close $fh
 pe_htree_build $mcell $rows
 detailed_placement
 
+# No dummy loads: with the gated datapath tree, two of them found no room in
+# the placement.
 clock_tree_synthesis -root_buf sky130_fd_sc_hd__clkbuf_16 \
-    -buf_list {sky130_fd_sc_hd__clkbuf_8 sky130_fd_sc_hd__clkbuf_4 sky130_fd_sc_hd__clkbuf_2}
+    -buf_list {sky130_fd_sc_hd__clkbuf_8 sky130_fd_sc_hd__clkbuf_4 sky130_fd_sc_hd__clkbuf_2} \
+    -dont_use_dummy_load
 set_propagated_clock [all_clocks]
 repair_clock_nets
 detailed_placement
