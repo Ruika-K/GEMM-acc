@@ -75,7 +75,7 @@ MAC_CS = rtl("gemm_mac_cs")
 CPA = rtl("gemm_cpa")
 PE = rtl("gemm_mac", "gemm_pe")
 ARRAY = rtl("gemm_mac", "gemm_cpa", "gemm_pe", "gemm_array")
-CORE = ARRAY + rtl("gemm_delay", "gemm_fifo", "gemm_dcnt", "gemm_ctrl", "gemm_core")
+CORE = ARRAY + rtl("gemm_delay", "gemm_fifo", "gemm_dcnt", "gemm_ctrl", "gemm_cg", "gemm_core")
 TOP = CORE + rtl("gemm_tile_iter", "gemm_load", "gemm_seq", "gemm_out", "gemm_csr", "gemm_top")
 BCAST = rtl("gemm_mac", "gemm_cpa") + [ROOT / "syn" / "common" / "gemm_array_bcast.sv"]
 MEM_BB = HERE / "gemm_mem_blackbox.sv"
@@ -157,11 +157,15 @@ def jobs():
         out[f"core_8{sfx}"] = dict(top="gemm_core", sources=CORE, params=size, abc="delay", **kw)
         out[f"top_8{sfx}"] = dict(top="gemm_top", sources=TOP + [MEM_BB], params=size,
                                   clock="aclk", abc="delay", **kw)
-        # The same with the SRAM macros, for place and route of the chip, and
-        # with a register stage of its own in front of the array (IN_PIPE, see
-        # gemm_core): placed, the input register of row 0 sat between the
-        # SRAM read port and the corner PE and was too far from both.
-        out[f"chip_8{sfx}"] = dict(top="gemm_top", sources=TOP + MEM_SRAM, params={**size, "IN_PIPE": 1},
+        # The same with the SRAM macros, for place and route of the chip, with
+        # a register stage of its own in front of the array (IN_PIPE, see
+        # gemm_core: placed, the input register of row 0 sat between the SRAM
+        # read port and the corner PE and was too far from both), and with
+        # the datapath clock gated while the core is idle (CLOCK_GATING, the
+        # library's clock gating cell from gemm_cg_sky130.sv).
+        chip_src = [s for s in TOP if s.name != "gemm_cg.sv"] + MEM_SRAM + [HERE / "gemm_cg_sky130.sv"]
+        out[f"chip_8{sfx}"] = dict(top="gemm_top", sources=chip_src,
+                                   params={**size, "IN_PIPE": 1, "CLOCK_GATING": 1},
                                    clock="aclk", abc="delay", libs=SRAM_LIBS, **kw)
 
     size = {"ROWS": 8, "COLS": 8}

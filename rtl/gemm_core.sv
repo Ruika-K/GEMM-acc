@@ -33,7 +33,8 @@ module gemm_core #(
     parameter int CPA_SEG   = 16,     // ACC_SEG > 0: segment width of the final adders
     parameter int K_MAX     = 1024,
     parameter int OUT_DEPTH = ROWS,   // output FIFO depth in rows
-    parameter int IN_PIPE   = 0       // extra register stages between the input registers and the array
+    parameter int IN_PIPE   = 0,      // extra register stages between the input registers and the array
+    parameter bit CLOCK_GATING = 0    // 1: stop the clock of the datapath while the core is idle
 ) (
     input  logic                              clk,
     input  logic                              rst_n,
@@ -98,6 +99,22 @@ module gemm_core #(
     );
 
     // ------------------------------------------------------------------
+    // Clock of the datapath: input registers, delay lines, array, final
+    // adders, output FIFO. With CLOCK_GATING it stops while the core is idle
+    // (no command, every result row read), and runs during reset so that the
+    // reset reaches its registers. The controller keeps the free clock.
+    // Leaving idle takes a command, and the first beat comes two cycles
+    // after it is taken; the clock runs again one cycle after it is taken.
+    // ------------------------------------------------------------------
+    logic dclk;
+
+    gemm_cg #(.ENABLE(CLOCK_GATING)) u_cg (
+        .clk_i (clk),
+        .en_i  (!idle_o || !rst_n),
+        .gclk_o(dclk)
+    );
+
+    // ------------------------------------------------------------------
     // Input register: every beat is registered once before it enters the
     // delay lines, so no handshake logic sits in front of a multiplier.
     // Operand registers hold their value outside operand beats to keep the
@@ -110,7 +127,7 @@ module gemm_core #(
     logic [COLS-1:0][DATA_W-1:0]  b_q;
     logic [COLS-1:0][ACC_W-1:0]   d_q;
 
-    always_ff @(posedge clk) begin
+    always_ff @(posedge dclk) begin
         if (!rst_n) begin
             shift_q <= 1'b0;
             tag_q   <= 2'b00;
@@ -131,7 +148,7 @@ module gemm_core #(
     logic [COLS-1:0]              dm_q;
     logic [COLS-1:0][ACC_W-1:0]   d_m;
 
-    always_ff @(posedge clk) begin
+    always_ff @(posedge dclk) begin
         if (beat_mac) begin
             a_q <= a_i;
             for (int j = 0; j < COLS; j++) b_q[j] <= col_en[j] ? b_i[j] : '0;
@@ -161,23 +178,23 @@ module gemm_core #(
     generate
         for (genvar i = 0; i < ROWS; i++) begin : g_a_skew
             gemm_delay #(.WIDTH(1), .STAGES(i + IN_PIPE), .RESET(1)) u_av (
-                .clk(clk), .rst_n(rst_n), .d_i(av_q[i]), .q_o(av_skew[i])
+                .clk(dclk), .rst_n(rst_n), .d_i(av_q[i]), .q_o(av_skew[i])
             );
             gemm_delay #(.WIDTH(DATA_W), .STAGES(i + IN_PIPE), .RESET(0)) u_a (
-                .clk(clk), .rst_n(rst_n), .d_i(a_q[i]), .q_o(a_skew[i])
+                .clk(dclk), .rst_n(rst_n), .d_i(a_q[i]), .q_o(a_skew[i])
             );
         end
         for (genvar j = 0; j < COLS; j++) begin : g_bd_skew
             gemm_delay #(.WIDTH(DATA_W), .STAGES(j + IN_PIPE), .RESET(0)) u_b (
-                .clk(clk), .rst_n(rst_n), .d_i(b_q[j]), .q_o(b_skew[j])
+                .clk(dclk), .rst_n(rst_n), .d_i(b_q[j]), .q_o(b_skew[j])
             );
             gemm_delay #(.WIDTH(ACC_W), .STAGES(j + PE_PIPE + IN_PIPE), .RESET(0)) u_d (
-                .clk(clk), .rst_n(rst_n), .d_i(d_m[j]), .q_o(d_skew[j])
+                .clk(dclk), .rst_n(rst_n), .d_i(d_m[j]), .q_o(d_skew[j])
             );
         end
     endgenerate
     gemm_delay #(.WIDTH(1), .STAGES(IN_PIPE), .RESET(1)) u_shift (
-        .clk(clk), .rst_n(rst_n), .d_i(shift_q), .q_o(shift_d)
+        .clk(dclk), .rst_n(rst_n), .d_i(shift_q), .q_o(shift_d)
     );
 
     // ------------------------------------------------------------------
@@ -198,7 +215,7 @@ module gemm_core #(
         .MUL_CS (MUL_CS),
         .CPA_SEG(CPA_SEG)
     ) u_array (
-        .clk      (clk),
+        .clk      (dclk),
         .rst_n    (rst_n),
         .a_valid_i(av_skew),
         .a_i      (a_skew),
@@ -223,13 +240,13 @@ module gemm_core #(
     generate
         for (genvar j = 0; j < COLS; j++) begin : g_c_deskew
             gemm_delay #(.WIDTH(ACC_W), .STAGES(COLS - 1 - j), .RESET(0)) u_c (
-                .clk(clk), .rst_n(rst_n), .d_i(c_arr[j]), .q_o(c_row[j])
+                .clk(dclk), .rst_n(rst_n), .d_i(c_arr[j]), .q_o(c_row[j])
             );
         end
     endgenerate
 
     gemm_delay #(.WIDTH(2), .STAGES(COLS - 1 + PE_PIPE + CPA_LAT + IN_PIPE), .RESET(1)) u_tag (
-        .clk(clk), .rst_n(rst_n), .d_i(tag_q), .q_o(tag_d)
+        .clk(dclk), .rst_n(rst_n), .d_i(tag_q), .q_o(tag_d)
     );
 
     // ------------------------------------------------------------------
@@ -239,7 +256,7 @@ module gemm_core #(
         .WIDTH(1 + COLS * ACC_W),
         .DEPTH(OUT_DEPTH)
     ) u_fifo (
-        .clk    (clk),
+        .clk    (dclk),
         .rst_n  (rst_n),
         .push_i (tag_d[0]),
         .data_i ({tag_d[1], c_row}),

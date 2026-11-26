@@ -6,7 +6,7 @@ import random
 import cocotb
 import numpy as np
 from cocotb.clock import Clock
-from cocotb.triggers import ReadOnly, RisingEdge, with_timeout
+from cocotb.triggers import ClockCycles, ReadOnly, RisingEdge, with_timeout
 
 from gemm_host import (
     CTRL_LOAD_A,
@@ -295,3 +295,39 @@ async def throughput(dut):
         # extra stages in front of the array.
         bound = p.rows * p.cols + p.rows + 8 + cpa_latency(dut) + in_pipe(dut)
         assert overhead <= bound, f"overhead {overhead} > {bound}"
+
+
+async def edges(sig, cycles, clk):
+    """Rising edges of sig during the given number of cycles of clk."""
+    count = 0
+
+    async def counter():
+        nonlocal count
+        while True:
+            await RisingEdge(sig)
+            count += 1
+
+    task = cocotb.start_soon(counter())
+    await ClockCycles(clk, cycles)
+    task.cancel()
+    return count
+
+
+@cocotb.test()
+async def clock_gating(dut):
+    """With CLOCK_GATING, the datapath clock of the core stops once a run has
+    finished and the core is idle, and runs again for the next run (RTL only:
+    the netlist has no such signal by name)."""
+    try:
+        if int(dut.CLOCK_GATING.value) == 0:
+            return
+        dclk = dut.u_core.dclk
+    except AttributeError:
+        return
+    p, rng, host = await setup(dut, SEED + 11)
+    assert await edges(dclk, 20, dut.aclk) == 0, "datapath clock runs after reset"
+    await check(host, *operands(p, rng, p.rows, 5, p.cols))
+    await ClockCycles(dut.aclk, 5)
+    assert await edges(dclk, 20, dut.aclk) == 0, "datapath clock runs while idle"
+    await check(host, *operands(p, rng, 2 * p.rows, 7, p.cols + 1))
+
