@@ -36,7 +36,16 @@ import re
 import sys
 from pathlib import Path
 
-from cocotb_tools.runner import get_runner
+from cocotb_tools.runner import Icarus, get_runner
+
+
+class IcarusVcd(Icarus):
+    """cocotb's Icarus runner passes -none to vvp unless it writes its own
+    waveforms from time 0, which turns off $dumpvars; this one passes -vcd, so
+    the wrapper's window (power.py) is written."""
+
+    def _test_command(self):
+        return [["-vcd" if arg == "-none" else arg for arg in cmd] for cmd in super()._test_command()]
 
 ROOT = Path(__file__).resolve().parents[2]
 PDK = Path(os.environ.get("PDK_ROOT", Path.home() / "pdk" / "sky130")) / "sky130A"
@@ -169,6 +178,18 @@ module gemm_top_gls #(
         .m_axis_tvalid(m_axis_tvalid), .m_axis_tready(m_tready_d), .m_axis_tdata(m_axis_tdata),
         .m_axis_tlast(m_axis_tlast), .irq_o(irq_o)
     );
+
+    // Switching activity for power analysis (syn/asic/power.py): the test
+    // bench raises dump_on where the window starts, the window ends with the
+    // simulation. Nothing is written without +vcd=<file>.
+    reg          dump_on = 1'b0;
+    reg [8*256-1:0] vcd_file;
+    always @(posedge dump_on) begin
+        if ($value$plusargs("vcd=%s", vcd_file)) begin
+            $dumpfile(vcd_file);
+            $dumpvars(0, u_netlist);
+        end
+    end
 endmodule
 """
 
@@ -221,10 +242,11 @@ def nonblocking_outputs(build, init):
     return path
 
 
-def chip(job, init):
+def chip(job, init, test_module="test_gemm_top", testcase=None, plusargs=()):
     """Gate-level simulation of the routed chip: top-level netlist, PE macro
     netlist and the OpenRAM simulation models of the SRAM macros, driven by
-    tb/test_gemm_top.py (default parameters: 8 x 8, 1024-word memories)."""
+    tb/test_gemm_top.py (default parameters: 8 x 8, 1024-word memories), or
+    by another test module (power.py: tb/test_gemm_power.py)."""
     variant = job[len("chip_8"):]
     asic = ROOT / "syn" / "build" / "asic"
     netlists = [asic / job / "pnr" / "gemm_top.pnr.v", asic / f"pe{variant}" / "macro" / "gemm_pe.pnr.v"]
@@ -245,7 +267,7 @@ def chip(job, init):
         dst = build / src.name
         dst.write_text(re.sub(r"parameter VERBOSE = 1", "parameter VERBOSE = 0", src.read_text()))
         models.append(dst)
-    runner = get_runner("icarus")
+    runner = IcarusVcd() if plusargs else get_runner("icarus")
     runner.build(
         sources=[primitives(build, init), nonblocking_outputs(build, init), *netlists, *models,
                  build / "gemm_top_gls.v"],
@@ -255,8 +277,8 @@ def chip(job, init):
         build_dir=build,
         always=True,
     )
-    runner.test(hdl_toplevel="gemm_top_gls", test_module="test_gemm_top",
-                test_dir=ROOT / "tb", build_dir=build)
+    runner.test(hdl_toplevel="gemm_top_gls", test_module=test_module, testcase=testcase,
+                plusargs=list(plusargs), test_dir=ROOT / "tb", build_dir=build)
 
 
 def main():
