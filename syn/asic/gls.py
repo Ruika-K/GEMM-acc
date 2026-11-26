@@ -221,7 +221,13 @@ def chip(job, init):
         sources=[primitives(build, init), CELLS / "sky130_fd_sc_hd.v", *netlists, *models,
                  build / "gemm_top_gls.v"],
         hdl_toplevel="gemm_top_gls",
-        defines={"FUNCTIONAL": 1, "UNIT_DELAY": ""},
+        # Flip-flops and latches (the only cells that use UNIT_DELAY) change
+        # their output 50 ps after the clock edge; all other cells have no
+        # delay. Without it, a clock tree is a chain of zero-delay buffers and
+        # a register whose clock passes fewer buffers than the next one's
+        # changes its output before the next one samples: the hand-built PE
+        # tree has 6 buffers to a flip-flop, the register tree 8 - 10.
+        defines={"FUNCTIONAL": 1, "UNIT_DELAY": "#0.05"},
         timescale=("1ns", "1ps"),
         build_dir=build,
         always=True,
