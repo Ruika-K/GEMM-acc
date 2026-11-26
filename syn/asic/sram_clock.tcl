@@ -2,13 +2,14 @@
 # SRAM clock of the chip (pnr_top.tcl): earlier than the registers.
 #
 # Clock tree synthesis puts the SRAM clock pins in a tree of their own and
-# lines it up with the register tree by a chain of delay buffers at its root
-# (delaybuf_*). For the SRAMs that is the wrong target: their read data comes
-# after the falling clock edge (half a cycle for the paths out of them), while
-# the paths into them have a full cycle. sram_clock_early takes delay buffers
-# out of that chain, one at a time, until the SRAM clock pins get the clock
-# `early` ns (slow corner) before the registers around the array, or the chain
-# is empty.
+# lines it up with the register tree by delay buffers
+# (delaybuf_*, at its root or further down). For the SRAMs that is the wrong
+# target: their read data comes after the falling clock edge (half a cycle for
+# the paths out of them), while the paths into them have a full cycle.
+# sram_clock_early takes delay buffers out, on every path to an SRAM clock pin
+# the one nearest to the port, a round at a time, until the SRAM clock pins
+# get the clock `early` ns (slow corner) before the registers around the
+# array, or none are left.
 # ------------------------------------------------------------------------------
 
 proc sram_clock_median {} {
@@ -24,25 +25,43 @@ proc sram_clock_median {} {
         [lindex $v 0] [lindex $v end]]
 }
 
-# The delay buffers in front of the SRAM clock pins: walk from one SRAM clock
-# pin towards the clock port and keep the buffers that CTS inserted to balance
-# latency, nearest to the port first.
+# Whether everything below instance b in the clock tree is an SRAM clock pin
+# (through buffers only).
+proc sram_clock_only_srams {b} {
+    set out [[$b findITerm X] getNet]
+    foreach it [$out getITerms] {
+        set inst [$it getInst]
+        if {$inst eq $b} continue
+        set m [[$inst getMaster] getName]
+        if {[string match sky130_sram_* $m]} continue
+        if {[string match sky130_fd_sc_hd__clkbuf_* $m] && [sram_clock_only_srams $inst]} continue
+        return 0
+    }
+    return 1
+}
+
+# The delay buffers that clock tree synthesis put in front of the SRAM clock
+# pins to balance latency (delaybuf_*), anywhere in the tree: for every SRAM
+# clock pin, the one nearest to the clock port on its way up, if nothing but
+# SRAM clock pins lies below it (the clock gate and the registers keep theirs).
 proc sram_clock_delaybufs {} {
-    set sram {}
+    set found [dict create]
     foreach inst [$::block getInsts] {
-        if {[string match sky130_sram_* [[$inst getMaster] getName]]} { set sram $inst; break }
+        if {![string match sky130_sram_* [[$inst getMaster] getName]]} continue
+        foreach pn {clk0 clk1} {
+            set net [[$inst findITerm $pn] getNet]
+            set top ""
+            while {$net ne "NULL"} {
+                set drv ""
+                foreach it [$net getITerms] { if {[$it isOutputSignal]} { set drv [$it getInst] } }
+                if {$drv eq ""} break
+                if {[string match delaybuf_* [$drv getName]] && [sram_clock_only_srams $drv]} { set top $drv }
+                set net [[$drv findITerm A] getNet]
+            }
+            if {$top ne ""} { dict set found [$top getName] $top }
+        }
     }
-    if {$sram eq ""} { return {} }
-    set net [[$sram findITerm clk0] getNet]
-    set chain {}
-    while {$net ne "NULL"} {
-        set drv ""
-        foreach it [$net getITerms] { if {[$it isOutputSignal]} { set drv [$it getInst] } }
-        if {$drv eq ""} break
-        if {[string match delaybuf_* [$drv getName]]} { set chain [linsert $chain 0 $drv] }
-        set net [[$drv findITerm A] getNet]
-    }
-    return $chain
+    return [dict values $found]
 }
 
 # Take buffer b out: its loads move to its input net.
@@ -66,11 +85,11 @@ proc sram_clock_early {early} {
         # A delay buffer is 0.3 - 0.4 ns: take one out while that brings the
         # pins closer to the target.
         if {$excess < 0.18} break
-        set chain [sram_clock_delaybufs]
-        if {[llength $chain] == 0} { puts "sram_clock_early: no delay buffer left"; break }
-        sram_clock_bypass [lindex $chain 0]
+        set bufs [sram_clock_delaybufs]
+        if {[llength $bufs] == 0} { puts "sram_clock_early: no delay buffer left"; break }
+        foreach b $bufs { sram_clock_bypass $b }
         estimate_parasitics -placement
-        incr k
+        incr k [llength $bufs]
     }
     return $k
 }

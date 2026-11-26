@@ -325,6 +325,7 @@ async def clock_gating(dut):
     except AttributeError:
         return
     p, rng, host = await setup(dut, SEED + 11)
+    await ClockCycles(dut.aclk, 2)     # the gate's enable is a register: a cycle late
     assert await edges(dclk, 20, dut.aclk) == 0, "datapath clock runs after reset"
     await check(host, *operands(p, rng, p.rows, 5, p.cols))
     await ClockCycles(dut.aclk, 5)

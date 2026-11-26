@@ -103,14 +103,25 @@ module gemm_core #(
     // adders, output FIFO. With CLOCK_GATING it stops while the core is idle
     // (no command, every result row read), and runs during reset so that the
     // reset reaches its registers. The controller keeps the free clock.
-    // Leaving idle takes a command, and the first beat comes two cycles
-    // after it is taken; the clock runs again one cycle after it is taken.
+    //
+    // The enable comes straight from a register: the clock gate sits near
+    // the root of the clock tree and gets the clock nanoseconds before the
+    // registers behind it, so its enable has that much less than a cycle;
+    // through the logic of idle_o it was 1 ns late in the placed chip. The
+    // register makes the gate open and close a cycle later. Leaving idle
+    // takes a command; the first beat comes two cycles after the command is
+    // taken, and the edge at its end is the first the gate lets through.
     // ------------------------------------------------------------------
-    logic dclk;
+    logic dclk, cg_en_q;
+
+    always_ff @(posedge clk) begin
+        if (!rst_n) cg_en_q <= 1'b1;
+        else        cg_en_q <= !idle_o;
+    end
 
     gemm_cg #(.ENABLE(CLOCK_GATING)) u_cg (
         .clk_i (clk),
-        .en_i  (!idle_o || !rst_n),
+        .en_i  (cg_en_q),
         .gclk_o(dclk)
     );
 
