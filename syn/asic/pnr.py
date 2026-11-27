@@ -106,8 +106,10 @@ CHANNEL_Y = 5.44  # um between macro rows (2 rows)
 # like free time. It was not (-0.45 ns, 184 instead of 187 MHz): the worst of
 # those paths start at the registers that get the clock last in their own tree,
 # 0.3 ns after the median, and a third of the path is the register driving the
-# wire into the PE.
-PE_CLK_LATE = 0.15
+# wire into the PE. With the clock gate of the chip (step 12) the registers
+# behind the gate are spread wider and the PEs have to be later: one delay
+# buffer (0.2 ns) took the chip from 183 to 190 MHz; 0.35 asks for two.
+PE_CLK_LATE = 0.35
 # Chip: the SRAM clock pins get the clock this much earlier than the registers
 # around the array (ns, slow corner). Clock tree synthesis lines them up with
 # the registers, but the read data of an SRAM comes after the falling edge,
