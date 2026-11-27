@@ -108,7 +108,9 @@ CHANNEL_Y = 5.44  # um between macro rows (2 rows)
 # 0.3 ns after the median, and a third of the path is the register driving the
 # wire into the PE. With the clock gate of the chip (step 12) the registers
 # behind the gate are spread wider and the PEs have to be later: one delay
-# buffer (0.2 ns) took the chip from 183 to 190 MHz; 0.35 asks for two.
+# buffer (0.2 ns) took the chip from 183 to 190 MHz, two (0.35 asks for two)
+# to 194 MHz, with hold still met (+0.10 ns) and the paths out of the PEs at
+# +1.8 ns; the slowest path is then elsewhere (output FIFO to serialiser).
 PE_CLK_LATE = 0.35
 # Chip: the SRAM clock pins get the clock this much earlier than the registers
 # around the array (ns, slow corner). Clock tree synthesis lines them up with
