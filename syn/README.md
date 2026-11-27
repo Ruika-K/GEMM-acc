@@ -147,7 +147,14 @@ Needs the `sky130_sram_macros` library next to `sky130_fd_sc_hd` in the PDK
   of the chain at the root of the SRAM tree until the SRAMs get the clock
   `SRAM_CLK_EARLY` before the registers (their read data has half a cycle).
 * The chip is synthesised with `IN_PIPE = 1` (a register stage of its own in
-  front of the array, see `docs/spec.md`).
+  front of the array, see `docs/spec.md`) and `CLOCK_GATING = 1`: the core
+  datapath behind the library's clock gating cell (`gemm_cg_sky130.sv` in
+  place of `rtl/gemm_cg.sv`). `clock_gate.tcl` takes the gate out of clock
+  tree synthesis (its clock pin on a net of its own, the net behind it a
+  clock root of its own, `-clk_nets`), drives it from the clock port
+  afterwards and lines the registers behind it up with the controller and
+  sequencer. `sta_flat.tcl` reports the setup and hold checks of the gate's
+  enable (`setup_clock_gate`, `hold_clock_gate`).
 * `sta_flat.tcl` reports the paths through the SRAMs apart from those between
   registers (`sram_slack_ss_ns` in `pnr_results.csv`), and the worst
   difference in clock arrival between neighbouring PEs at the slow corner

@@ -7,8 +7,8 @@ is the main target, and an FPGA implementation used as a prototype.
 |------|-------|
 | ASIC, sky130, synthesis and pre-layout timing | done |
 | ASIC, sky130, place and route of the array | done up to 16 x 16 (16 x 16 hierarchically, with the PE as a hard macro) |
-| ASIC, sky130, place and route of the complete chip | done: 8 x 8 array, SRAM macros, 9.7 mm2, 193 MHz at the slow corner |
-| ASIC, sky130, power of the chip from simulated activity | done: 35 - 49 pJ per multiply-accumulate; idle at 67 - 80 % of full load |
+| ASIC, sky130, place and route of the complete chip | done: 8 x 8 array, SRAM macros, clock gating, 9.7 mm2, 194 MHz at the slow corner |
+| ASIC, sky130, power of the chip from simulated activity | done: 31 - 44 pJ per multiply-accumulate; idle 12 mW at 100 MHz with clock gating (119 mW without) |
 | FPGA, Lattice ECP5 (Yosys + nextpnr) | done |
 | FPGA, Xilinx Zynq-7000 (Vivado) | done |
 
@@ -625,24 +625,25 @@ an 8 x 8 array, `MUL_CS = 1`, `ACC_SEG = 4`, default memory sizes.
 | Die | 2.79 x 3.49 mm = 9.72 mm2 |
 | Macros | 64 PEs (0.90 mm2); 16 OpenRAM SRAMs (3.80 mm2): 4 x 2 KB each for A and B, 8 x 1 KB for the bias |
 | Standard cells | 22 300, 0.42 mm2: skew and de-skew lines, final adders, output FIFO, control, AXI |
-| Fmax between registers, typical / slow / fast | **373 / 193 / 573 MHz** |
+| Fmax between registers, typical / slow / fast | **375 / 194 / 582 MHz** |
 | Clock skew between neighbouring PEs, slow corner | 0.008 ns at most (hand-built H-tree, see below) |
-| Paths into and out of the SRAMs, slow corner, 5 ns | worst slack -0.01 ns, with the SRAMs' own times from their models (see below) |
-| Hold between registers | met at every corner, worst +0.137 ns |
+| Paths into and out of the SRAMs, slow corner, 5 ns | worst slack -0.06 ns, with the SRAMs' own times from their models (see below) |
+| Clock gate enable, slow corner | met, +0.40 ns |
+| Hold between registers | met at every corner, worst +0.101 ns |
 | Routing violations | 0 (the router's own check) |
 | Power grid | every instance connected to VPWR and VGND |
-| Run time | 24 minutes, plus 2 for the PE macro |
+| Run time | 26 minutes, plus 2 for the PE macro |
 | Gate-level simulation | the routed netlist with the SRAM models passes all 14 top-level tests, with every register starting at 0 and again at 1; cycle counts equal to the RTL |
 
-**Routed, the chip runs at 193 MHz at the slow corner, above the 162 MHz of
+**Routed, the chip runs at 194 MHz at the slow corner, above the 162 MHz of
 synthesis** (timing repair sizes up cells on the critical paths by more than
 the wires cost, as for the array alone). The array on its own reaches
 197 - 199 MHz; inside the chip, the paths between PEs are as fast as that
-(the worst is inside a single PE, the macro's own limit). The rest of the
-gap is in the paths into the array (-0.19 ns), from registers that get the
-clock 0.2 ns after the PEs, and in the control logic (-0.17 ns). How the
-chip got from 183 to 193 MHz: the clock tree of the PEs (183 to 187 MHz) and
-the paths around the array (187 to 193 MHz), below.
+(the worst is inside a single PE, the macro's own limit). The slowest path
+is now from the output FIFO to the result serialiser (-0.16 ns). How the
+chip got from 183 to 194 MHz: the clock tree of the PEs (183 to 187 MHz),
+the paths around the array (187 to 193 MHz), and the clock tree as rebuilt
+for clock gating (194 MHz), below.
 
 Floorplan: the memories sit where their data goes. A (one operand per array
 row) is west of the array, with the macros of lanes 0 - 3 next to rows 0 - 3;
@@ -820,9 +821,9 @@ edge, and the registers inside see the clock 2 - 3 ns later.
 ## Not done yet
 
 * Timing of the SRAM macros from a characterisation that can be trusted.
-* The last 2 - 3 % against the array alone (193 against 197 - 199 MHz): the
-  paths into the array from registers late in the register clock tree
-  (-0.19 ns) and the control logic (-0.17 ns).
+* The last 2 % against the array alone (194 against 197 - 199 MHz): the
+  output FIFO to the result serialiser (-0.16 ns), then the paths into the
+  array from registers late in their clock tree.
 * The broadcast baseline at 16 x 16 in a full or hierarchical flow; the
   systolic array has both.
 * Hold from the inputs of the array and of the chip, which the hierarchical
@@ -834,8 +835,9 @@ edge, and the registers inside see the clock 2 - 3 ns later.
 * Booth recoding of the multiplier, which would halve the number of partial
   product rows.
 * Sign-off checks: DRC and LVS with the foundry decks, IR drop, antenna.
-* Clock gating. Most registers have an enable; idle, the chip draws 67 - 80 %
-  of its power under full load (see Power).
+* Finer clock gating: under full load the gate is open, and registers that
+  hold their value between operand beats (the input registers, the skew
+  lines between tiles) still get every clock edge.
 * Power of the SRAMs from models that know whether a macro is selected.
 
 # ASIC: power of the chip
@@ -855,7 +857,7 @@ the typical corner. Numbers in `syn/asic/power_results.csv`.
 The simulation clock is 10 ns: the OpenRAM simulation models put the read
 data 3 ns after the falling edge, which a 5 ns clock does not leave room for.
 Power is therefore given at 100 MHz. Dynamic power scales with the frequency
-(leakage is 0.2 mW); at the 193 MHz of the slow corner it would be 1.9 times
+(leakage is 0.2 mW); at the 194 MHz of the slow corner it would be 1.9 times
 as much. Energy per operation does not depend on the frequency.
 
 The SRAM models charge the energy of a full access on every clock edge,
@@ -866,23 +868,25 @@ as the models say, and counted only in the cycles in which a port is selected
 (from the duty of its chip select in the simulation). The truth is in
 between, closer to the second.
 
-| 100 MHz, typical corner | compute | idle |
-|---|---|---|
-| Total, SRAMs as modelled / only when selected | **243 / 177 mW** | 194 / 119 mW |
-| PE array (64 macros, their own clock trees included) | 85.6 mW | 42.7 mW |
-| SRAMs, as modelled / only when selected | 75.1 / 8.8 mW | 75.1 / 0 mW |
-| Clock tree of the top level | 43.1 mW | 43.1 mW |
-| Everything else (skew lines, final adders, FIFO, control, AXI) | 39.5 mW | 33.1 mW |
-| Energy per multiply-accumulate | **48.8 / 35.5 pJ** | |
-| Efficiency (2 operations per multiply-accumulate) | 0.041 / 0.056 TOPS/W | |
-| OpenSTA's default activity instead (inputs toggle in 10 % of cycles) | 196 mW | 196 mW |
+Without clock gating (as first measured) and with it (the chip as it is now):
 
-* **Idle, the chip draws 80 % (67 % without the unselected SRAMs) of its
+| 100 MHz, typical corner | compute, without | compute, with | idle, without | idle, with |
+|---|---|---|---|---|
+| Total, SRAMs as modelled / only when selected | 243 / 177 mW | **221 / 155 mW** | 194 / 119 mW | **87 / 12 mW** |
+| PE array (64 macros, their own clock trees included) | 85.6 mW | 85.4 mW | 42.7 mW | 0.0 mW |
+| SRAMs, as modelled / only when selected | 75.1 / 8.8 mW | 75.1 / 8.8 mW | 75.1 / 0 mW | 75.1 / 0 mW |
+| Clock tree of the top level | 43.1 mW | 21.1 mW | 43.1 mW | 6.8 mW |
+| Everything else (skew lines, final adders, FIFO, control, AXI) | 39.5 mW | 39.4 mW | 33.1 mW | 4.8 mW |
+| Energy per multiply-accumulate | 48.8 / 35.5 pJ | **44.4 / 31.0 pJ** | | |
+| Efficiency (2 operations per multiply-accumulate) | 0.041 / 0.056 TOPS/W | 0.045 / 0.064 TOPS/W | | |
+| OpenSTA's default activity instead (inputs toggle in 10 % of cycles) | 196 mW | 134 mW | 196 mW | 134 mW |
+
+Without clock gating:
+
+* **Idle, the chip drew 80 % (67 % without the unselected SRAMs) of its
   power under full load.** Idle, nothing switches but the clock: the clock
   pins of 19 000 flip-flops (54 mW), the clock trees, and the clock pins of
-  the SRAMs. Computing adds 49 - 58 mW of data switching on top. Most
-  registers have an enable already, so clock gating can take much of the
-  idle power away; it is the next step.
+  the SRAMs. Computing adds 49 - 58 mW of data switching on top.
 * **The PE array spends 17 pJ per multiply-accumulate, half of it (8.6 pJ)
   on the clock** (the PE power idle, times the time of the run).
 * **The default activity gives one number for both cases**, 20 % below full
@@ -892,7 +896,60 @@ between, closer to the second.
   neural network data, with many zeros and small values, toggles less, so
   the compute figures are an upper end for the datapath.
 
-# FPGA prototype: Xilinx Zynq-7000 (Vivado)
+## Clock gating
+
+The datapath of the core (input registers, skew and de-skew lines, the PE
+array with its final adders, the output FIFO: 7100 flip-flops and the 64
+PEs) runs on a clock that stops while the core is idle, that is, with no
+command and every result read (`CLOCK_GATING = 1` in `gemm_core`, the chip
+only). The controller, the CSR block, the AXI interfaces, the loader and the
+sequencer (1200 flip-flops) keep the free clock, since they have to answer
+the host at any time. During reset the gate is open, or the reset would not
+reach the registers behind it.
+
+* **The gate is the library's integrated clock gating cell** (`dlclkp`, a
+  latch and an AND gate characterised together). `rtl/gemm_cg.sv` is a
+  behavioural model of it for simulation, `syn/asic/gemm_cg_sky130.sv`
+  instantiates the cell.
+* **Its enable comes straight from a register.** The gate sits near the root
+  of the clock tree and gets the clock about 3 ns before the registers that
+  produce its enable; through the logic that decides "idle" the enable was
+  1.07 ns late at the slow corner. From a register it is +0.40 ns. The gate
+  opens and closes a cycle later; after a command, the first operand beat
+  comes two cycles later, which is still in time (`test_gemm_top.clock_gating`
+  checks that the clock stops after reset and after a run, and that the next
+  run works).
+* **Clock tree synthesis does not handle the gate well.** Left to itself, it
+  put the gate's clock pin into the tree of the SRAM clock pins and balanced
+  everything through it: the SRAMs ended up 1.6 ns apart, the registers
+  behind the gate 0.4 ns from the PEs, and the chip ran at 181 MHz. The gate
+  is now taken out of the synthesis like the PE tree (`clock_gate.tcl`):
+  before it, the gate's clock pin goes on a net of its own and the net behind
+  the gate is given to the synthesis as a clock root of its own; after it,
+  the gate is driven from the clock port, with delay buffers on the earlier
+  side until the registers behind the gate and the controller and sequencer
+  get the clock together. The SRAMs are then earlier than wanted, and
+  `sram_clock.tcl` adds delay at the root of their tree instead of taking it
+  out. With the PE clock two delay buffers later than the registers around
+  the array (`PE_CLK_LATE`), the chip runs at 194 MHz.
+* The synthesis' dummy loads (cells it adds to balance the load of tree
+  branches) are turned off: two of them found no room in the placement.
+
+What it saves:
+
+* **Idle, 119 mW become 12 mW** (without the unselected SRAMs; 194 mW become
+  87 mW with the SRAM models as they are, which charge 75 mW whether a
+  macro is selected or not). What is left is the free clock domain: its
+  1200 flip-flops, its clock tree and the gate.
+* **Under full load the gate is open**, so it saves nothing there itself.
+  The clock tree of the top level draws 22 mW less, because it is a
+  different tree: rebuilt in three parts and without dummy loads. Energy per
+  multiply-accumulate went from 35.5 to 31.0 pJ (48.8 to 44.4 with the
+  SRAM models).
+* OpenSTA's default activity, which knows nothing of the gate being closed,
+  still reports 134 mW for both.
+
+# FPGA prototype: Xilinx Zynq-7000 (Vivado)# FPGA prototype: Xilinx Zynq-7000 (Vivado)
 
 Flow: `syn/vivado/run.tcl`, Vivado 2023.2, device xc7z020clg400-1,
 out-of-context synthesis and implementation at a 6 ns clock target. Numbers

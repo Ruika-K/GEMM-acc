@@ -28,7 +28,7 @@ OpenROAD):
   minutes. The price of hierarchy is 15 - 20 % die area.
 * The complete chip placed and routed: the 64 PE macros, 16 OpenRAM SRAM
   macros for the operand memories and 22 000 standard cells on 9.7 mm2,
-  **193 MHz at the slow corner** (373 MHz typical) between registers, no
+  **194 MHz at the slow corner** (375 MHz typical) between registers, no
   routing violations, gate-level simulation of the routed netlist with the
   SRAM models. The PEs get a clock tree built by hand, an H-tree over the
   grid: 0.008 ns of skew between neighbouring PEs, where the tool's tree had
@@ -36,10 +36,11 @@ OpenROAD):
   so the paths through them are reported apart.
 * Power from simulated activity: a gate-level simulation of the routed chip
   writes the switching of every net, OpenSTA turns it into power with the
-  extracted parasitics. **35 - 49 pJ per multiply-accumulate** at the typical
+  extracted parasitics. **31 - 44 pJ per multiply-accumulate** at the typical
   corner (the range is the SRAM models, which charge an access whether a
-  macro is selected or not); idle, the chip still draws 67 - 80 % of that,
-  nearly all of it in the clock.
+  macro is selected or not). Clock gating stops the datapath clock while the
+  accelerator is idle: **idle power from 119 to 12 mW** at 100 MHz, with the
+  clock tree rebuilt around the gate and the chip still at 194 MHz.
 * The two steps that got it there from 89 MHz, both found by following the
   critical path. First the accumulator: it saves a carry every few bits
   instead of propagating it through 32 (`ACC_SEG`, 121 MHz). Then the
