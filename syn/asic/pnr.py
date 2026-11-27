@@ -107,7 +107,7 @@ CHANNEL_Y = 5.44  # um between macro rows (2 rows)
 # those paths start at the registers that get the clock last in their own tree,
 # 0.3 ns after the median, and a third of the path is the register driving the
 # wire into the PE.
-PE_CLK_LATE = 0.0
+PE_CLK_LATE = 0.15
 # Chip: the SRAM clock pins get the clock this much earlier than the registers
 # around the array (ns, slow corner). Clock tree synthesis lines them up with
 # the registers, but the read data of an SRAM comes after the falling edge,
