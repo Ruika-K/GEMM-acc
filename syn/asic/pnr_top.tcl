@@ -305,17 +305,24 @@ if {![regexp {timing_type : max_clock_tree_path;\s*cell_rise\(scalar\) \{\s*valu
 }
 close $fh
 pe_htree_build $mcell $rows
+# The clock gate of the datapath (CLOCK_GATING), if there is one, is taken out
+# of the synthesis as well and connected afterwards (clock_gate.tcl); the net
+# behind it becomes a clock root of its own.
+source [file join [file dirname [info script]] clock_gate.tcl]
+set cts_roots {}
+if {[cg_find] ne ""} { set cts_roots [list -clk_nets [list aclk [cg_detach]]] }
 detailed_placement
 
 # No dummy loads: with the gated datapath tree, two of them found no room in
 # the placement.
 clock_tree_synthesis -root_buf sky130_fd_sc_hd__clkbuf_16 \
     -buf_list {sky130_fd_sc_hd__clkbuf_8 sky130_fd_sc_hd__clkbuf_4 sky130_fd_sc_hd__clkbuf_2} \
-    -dont_use_dummy_load
+    -dont_use_dummy_load {*}$cts_roots
 set_propagated_clock [all_clocks]
 repair_clock_nets
 detailed_placement
 estimate_parasitics -placement
+if {[cg_find] ne ""} { cg_connect }
 pe_htree_connect $mcell $pe_internal $::env(PNR_PE_CLK_LATE)
 # The SRAMs get the clock PNR_SRAM_CLK_EARLY before the registers around the
 # array (sram_clock.tcl): their read data has half a cycle, their inputs a

@@ -9,7 +9,9 @@
 # sram_clock_early takes delay buffers out, on every path to an SRAM clock pin
 # the one nearest to the port, a round at a time, until the SRAM clock pins
 # get the clock `early` ns (slow corner) before the registers around the
-# array, or none are left.
+# array, or none are left. If they are earlier than that (with the clock gate
+# the synthesis builds the SRAM tree on its own), buffers are added at the
+# root of the SRAM tree instead (ctree_pad, clock_gate.tcl).
 # ------------------------------------------------------------------------------
 
 proc sram_clock_median {} {
@@ -76,20 +78,33 @@ proc sram_clock_bypass {b} {
 }
 
 proc sram_clock_early {early} {
-    set k 0
-    while 1 {
+    set removed 0
+    set added 0
+    while {$added < 8} {
         lassign [sram_clock_median] sram reg lo hi
         set excess [expr {$sram - ($reg - $early)}]
-        puts [format "sram_clock_early: %d delay buffers removed, SRAM clock pins %.3f (%.3f .. %.3f), registers %.3f - %.2f, excess %.3f" \
-            $k $sram $lo $hi $reg $early $excess]
-        # A delay buffer is 0.3 - 0.4 ns: take one out while that brings the
-        # pins closer to the target.
-        if {$excess < 0.18} break
-        set bufs [sram_clock_delaybufs]
-        if {[llength $bufs] == 0} { puts "sram_clock_early: no delay buffer left"; break }
-        foreach b $bufs { sram_clock_bypass $b }
+        puts [format "sram_clock_early: %d delay buffers removed, %d added, SRAM clock pins %.3f (%.3f .. %.3f), registers %.3f - %.2f, excess %.3f" \
+            $removed $added $sram $lo $hi $reg $early $excess]
+        # A delay buffer is 0.3 - 0.4 ns: take one out (or add one) while that
+        # brings the pins closer to the target.
+        if {$excess > 0.18} {
+            set bufs [sram_clock_delaybufs]
+            if {[llength $bufs] == 0} { puts "sram_clock_early: no delay buffer left"; break }
+            foreach b $bufs { sram_clock_bypass $b }
+            incr removed [llength $bufs]
+        } elseif {$excess < -0.18 && $removed == 0} {
+            # Too early (with the clock gate, the synthesis does not line the
+            # SRAM tree up with anything): one more buffer at its root.
+            foreach inst [$::block getInsts] {
+                if {[string match sky130_sram_* [[$inst getMaster] getName]]} { set sram_inst $inst; break }
+            }
+            ctree_pad [ctree_root [$sram_inst findITerm clk0]] sram_dly_$added
+            detailed_placement
+            incr added
+        } else {
+            break
+        }
         estimate_parasitics -placement
-        incr k [llength $bufs]
     }
-    return $k
+    return [list $removed $added]
 }
