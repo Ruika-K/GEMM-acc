@@ -259,6 +259,7 @@ which gives one beat per cycle without an extra skid buffer.
 | `K_MAX`      | 1024    | Largest K, sizes the K counter |
 | `OUT_DEPTH`  | `ROWS`  | Output FIFO depth in rows |
 | `IN_PIPE`    | 0       | Extra register stages between the input registers and the array (2.3) |
+| `CLOCK_GATING` | 0     | 1: the clock of the core datapath (input registers, delay lines, array, output FIFO) stops while the core is idle; the controller keeps the free clock. ASIC only |
 | `A_DEPTH`    | 1024    | A memory depth, words of `ROWS` elements |
 | `B_DEPTH`    | 1024    | B memory depth, words of `COLS` elements |
 | `BIAS_DEPTH` | 64      | Bias memory depth, words of `COLS` elements |
