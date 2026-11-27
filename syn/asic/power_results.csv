@@ -1,3 +1,3 @@
 job,workload,clk_mhz,window_ns,macs,run_cycles,total_mw,total_low_mw,pe_array_mw,sram_model_mw,sram_low_mw,clock_tree_mw,other_mw,sequential_mw,combinational_mw,clock_mw,default_activity_mw,pj_per_mac,pj_per_mac_low,tops_per_w,tops_per_w_low
-chip_8_m4,compute,100,14800,73728,1474,243.3,177.0,85.6,75.1,8.8,43.1,39.5,65.9,37.3,65.1,195.8,48.8,35.5,0.041,0.056
-chip_8_m4,idle,100,10000,0,0,194.0,118.9,42.7,75.1,0.0,43.1,33.1,53.9,0.0,65.1,195.8,,,,
+chip_8_m4,compute,100,14800,73728,1474,222.0,155.7,85.4,75.1,8.8,21.7,39.9,65.5,37.3,44.2,135.3,44.6,31.3,0.045,0.064
+chip_8_m4,idle,100,10000,0,0,87.8,12.7,0.0,75.1,0.0,7.4,5.3,4.7,0.0,8.0,135.3,,,,
