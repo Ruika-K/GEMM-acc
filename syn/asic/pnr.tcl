@@ -232,6 +232,10 @@ if {$macro} {
 } else {
     set_routing_layers -signal met1-met5 -clock met3-met5
 }
+# Power pins of the cells added since the power grid was built (clock tree
+# buffers and loads, timing repair): only the netlist records them, the rails
+# connect them in the layout; LVS needs them in the netlist.
+global_connect
 global_route -congestion_iterations 50
 estimate_parasitics -global_routing
 
@@ -239,6 +243,7 @@ if {$droute} {
     detailed_route -output_drc [file join $out drc.rpt] -verbose 1
     filler_placement {sky130_ef_sc_hd__decap_12 sky130_fd_sc_hd__decap_8 sky130_fd_sc_hd__decap_6 \
         sky130_fd_sc_hd__decap_4 sky130_fd_sc_hd__decap_3 sky130_fd_sc_hd__fill_2 sky130_fd_sc_hd__fill_1}
+    global_connect
 
     stage "parasitic extraction"
     define_process_corner -ext_model_index 0 X
