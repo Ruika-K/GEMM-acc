@@ -149,15 +149,20 @@ close $fh""", f"{self.top}_drc_magic")
 
     def lvs(self):
         gds = self.f("_lvs.gds") if self.chip else self.f(".gds")
+        # The SRAMs (LEF pins only in the LVS GDS) are abstract views: kept as
+        # black-box subcircuits with their ports. Without this, ext2spice
+        # leaves cells without devices out and their nets dangle.
+        abstract = "".join(f"load {m}\nproperty LEFview true\n" for m in pnr.SRAM_MACROS) if self.chip else ""
         self.magic(f"""gds flatglob *$$*
 gds read {gds}
-load {self.top}
+{abstract}load {self.top}
 select top cell
 extract no all
 extract do local
 extract unique
 extract all
 ext2spice lvs
+ext2spice blackbox on
 ext2spice -o {self.f('_layout.spice')}""", f"{self.top}_extract")
         # The routed netlist with power pins: cells placed after the power
         # grid (clock tree, repair, fillers) get theirs from global_connect.
