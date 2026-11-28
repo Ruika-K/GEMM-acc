@@ -7,7 +7,8 @@ is the main target, and an FPGA implementation used as a prototype.
 |------|-------|
 | ASIC, sky130, synthesis and pre-layout timing | done |
 | ASIC, sky130, place and route of the array | done up to 16 x 16 (16 x 16 hierarchically, with the PE as a hard macro) |
-| ASIC, sky130, place and route of the complete chip | done: 8 x 8 array, SRAM macros, clock gating, 9.7 mm2, 194 MHz at the slow corner |
+| ASIC, sky130, place and route of the complete chip | done: 8 x 8 array, SRAM macros, clock gating, 9.7 mm2, 192 MHz at the slow corner |
+| ASIC, sky130, sign-off checks (DRC, LVS, antenna) | done for the PE macro (all clean) and the chip (DRC clean, LVS match, 1 antenna net left) |
 | ASIC, sky130, power of the chip from simulated activity | done: 31 - 44 pJ per multiply-accumulate; idle 12 mW at 100 MHz with clock gating (119 mW without) |
 | FPGA, Lattice ECP5 (Yosys + nextpnr) | done |
 | FPGA, Xilinx Zynq-7000 (Vivado) | done |
@@ -385,8 +386,9 @@ sizes up the cells on the critical path by more than the wires cost.
 All blocks are free of routing violations and meet hold at every corner. The
 routed 4 x 4 and 8 x 8 systolic arrays of all three variants pass the array
 testbench in gate-level simulation (`syn/asic/gls.py --pnr`), with clock
-tree, buffers and resized cells in place. This DRC is the router's own; no
-sign-off DRC or LVS has been run.
+tree, buffers and resized cells in place. This DRC is the router's own; the
+foundry's DRC and LVS were run for the PE macro and the chip only (see
+[Sign-off checks](#asic-sign-off-checks)).
 
 Hold needs more attention as the datapath gets faster and the shift chain
 wider. The plain arrays needed no hold buffers, the 8 x 8 systolic array with
@@ -625,25 +627,28 @@ an 8 x 8 array, `MUL_CS = 1`, `ACC_SEG = 4`, default memory sizes.
 | Die | 2.79 x 3.49 mm = 9.72 mm2 |
 | Macros | 64 PEs (0.90 mm2); 16 OpenRAM SRAMs (3.80 mm2): 4 x 2 KB each for A and B, 8 x 1 KB for the bias |
 | Standard cells | 22 300, 0.42 mm2: skew and de-skew lines, final adders, output FIFO, control, AXI |
-| Fmax between registers, typical / slow / fast | **375 / 194 / 582 MHz** |
+| Fmax between registers, typical / slow / fast | **378 / 192 / 598 MHz** |
 | Clock skew between neighbouring PEs, slow corner | 0.008 ns at most (hand-built H-tree, see below) |
-| Paths into and out of the SRAMs, slow corner, 5 ns | worst slack -0.06 ns, with the SRAMs' own times from their models (see below) |
-| Clock gate enable, slow corner | met, +0.40 ns |
-| Hold between registers | met at every corner, worst +0.101 ns |
+| Paths into and out of the SRAMs, slow corner, 5 ns | worst slack -0.09 ns, with the SRAMs' own times from their models (see below) |
+| Clock gate enable, slow corner | met, +0.44 ns |
+| Hold between registers | met at every corner, worst +0.127 ns |
 | Routing violations | 0 (the router's own check) |
+| Sign-off checks | DRC with the foundry rules: 0 errors; LVS: match; antenna: 1 net left (see [Sign-off checks](#asic-sign-off-checks)) |
+| Added for sign-off | 651 antenna diodes, 1295 well taps, 639 metal patches |
 | Power grid | every instance connected to VPWR and VGND |
-| Run time | 26 minutes, plus 2 for the PE macro |
-| Gate-level simulation | the routed netlist with the SRAM models passes all 14 top-level tests, with every register starting at 0 and again at 1; cycle counts equal to the RTL |
+| Run time | 43 minutes, plus 2 for the PE macro |
+| Gate-level simulation | the routed netlist with the SRAM models passes all 15 top-level tests, with every register starting at 0 and again at 1; cycle counts equal to the RTL (run again on the layout after the sign-off changes) |
 
-**Routed, the chip runs at 194 MHz at the slow corner, above the 162 MHz of
+**Routed, the chip runs at 192 MHz at the slow corner, above the 162 MHz of
 synthesis** (timing repair sizes up cells on the critical paths by more than
 the wires cost, as for the array alone). The array on its own reaches
 197 - 199 MHz; inside the chip, the paths between PEs are as fast as that
 (the worst is inside a single PE, the macro's own limit). The slowest path
-is now from the output FIFO to the result serialiser (-0.16 ns). How the
+is now inside the output stream, from its tile iterator (-0.21 ns). How the
 chip got from 183 to 194 MHz: the clock tree of the PEs (183 to 187 MHz),
 the paths around the array (187 to 193 MHz), and the clock tree as rebuilt
-for clock gating (194 MHz), below.
+for clock gating (194 MHz), below. The changes for the sign-off checks
+(diodes and extra well taps, which move cells) cost 2 MHz: 192 MHz.
 
 Floorplan: the memories sit where their data goes. A (one operand per array
 row) is west of the array, with the macros of lanes 0 - 3 next to rows 0 - 3;
@@ -821,9 +826,9 @@ edge, and the registers inside see the clock 2 - 3 ns later.
 ## Not done yet
 
 * Timing of the SRAM macros from a characterisation that can be trusted.
-* The last 2 % against the array alone (194 against 197 - 199 MHz): the
-  output FIFO to the result serialiser (-0.16 ns), then the paths into the
-  array from registers late in their clock tree.
+* The last 3 % against the array alone (192 against 197 - 199 MHz): the
+  output stream (-0.21 ns), then the paths into the array from registers
+  late in their clock tree.
 * The broadcast baseline at 16 x 16 in a full or hierarchical flow; the
   systolic array has both.
 * Hold from the inputs of the array and of the chip, which the hierarchical
@@ -834,7 +839,10 @@ edge, and the registers inside see the clock 2 - 3 ns later.
   seven of its 32 carry inputs can be non-zero.
 * Booth recoding of the multiplier, which would halve the number of partial
   product rows.
-* Sign-off checks: DRC and LVS with the foundry decks, IR drop, antenna.
+* The rest of sign-off: the last antenna net, IR drop, metal fill, Magic's
+  DRC on the whole chip, and the checks for the hierarchical arrays (their
+  flow has the same changes, but was not run again). See
+  [Sign-off checks](#asic-sign-off-checks).
 * Finer clock gating: under full load the gate is open, and registers that
   hold their value between operand beats (the input registers, the skew
   lines between tiles) still get every clock edge.
@@ -949,7 +957,104 @@ What it saves:
 * OpenSTA's default activity, which knows nothing of the gate being closed,
   still reports 134 mW for both.
 
-# FPGA prototype: Xilinx Zynq-7000 (Vivado)# FPGA prototype: Xilinx Zynq-7000 (Vivado)
+# ASIC: sign-off checks
+
+Flow: `syn/asic/signoff.py pe_m4_macro`, then `signoff.py chip_8_m4`. Numbers
+in `syn/asic/signoff_results.csv`, reports in `syn/build/asic/<job>/signoff/`.
+The tools are the PDK's own decks run by Magic 8.3.703, Netgen 1.5.331 and
+KLayout 0.30.13, and OpenROAD's antenna check.
+
+Place and route works on a simplified picture of the layout: each cell is a
+box with pins and blocked areas (its LEF abstract), and the router checks its
+wires against a subset of the rules. Sign-off checks the real layout, the
+polygons that would go to the foundry (GDS), with the foundry's rules:
+
+* **DRC** (design rule check): every shape against the geometric rules of
+  the process. Examples: minimum width and spacing of each layer, the
+  minimum area of a piece of metal, how far a via must be enclosed.
+* **LVS** (layout versus schematic): the transistors and their connections
+  are extracted from the polygons and compared with the netlist, power and
+  ground included. It finds shorts, opens and anything the abstract view
+  does not show, such as a well that is not connected.
+* **Antenna**: while the chip is being made, the metal layers are etched one
+  after the other, and a long wire that so far only reaches a transistor
+  gate collects charge that can break the gate's thin oxide. The rule limits
+  the ratio of metal area to gate area on each layer; a diode on the wire (a
+  path for the charge) or a jump to a higher layer near the gate fixes it.
+
+| | PE macro | Chip |
+|---|---|---|
+| DRC, KLayout (front end, back end, off-grid) | 0 | 0 |
+| DRC, Magic (full rule set) | 0 | not run (hours for the chip) |
+| LVS | circuits match (895 devices, 949 nets) | circuits match (21 226 devices, 25 837 nets) |
+| Antenna | 0 | 1 net |
+| Added for it: metal patches / diodes / well taps | 3 / 2 / 0 | 639 / 651 / 1295 |
+
+The SRAMs are in the DRC with their own layouts, less five implant and
+well rules that the PDK's deck itself does not apply inside SRAM cells (its
+cell exclusion list: the bit cells follow the foundry's own SRAM rules), and
+black boxes in the LVS (their pins are checked, their insides are OpenRAM's). For the chip the
+PE macro is a cell of its own, compared against its own netlist.
+
+The first runs found these, in the order they were fixed:
+
+* **Metal below the minimum area of its layer** (met3, 0.24 um2): where a
+  signal goes from met2 up to met4 with a short jog on met3, the router keeps
+  on met3 only the two via landing pads and the jog, 0.19 um2. The router's
+  own check does not report it; Magic and KLayout both do. 637 pieces in the
+  chip, 3 in the PE. `min_area.py` works out a patch for each: the piece
+  extended along its long side until it has the area, taken only if it stays
+  the minimum spacing away from every shape of another net. The first
+  version read the spacing from the plain `SPACING` lines of the technology
+  file, which for met3 is commented out in favour of a table (more spacing
+  next to wide shapes), so it read none and 12 of its patches came too close
+  to their neighbours; it now uses the table. 2 more patches fill the outer
+  corner of two met2 turns that the router wrote with no extension past the
+  corner, which leaves the turn narrower than the minimum width.
+* **Wells without a tap.** The n-well of the standard cells reaches the
+  supply only through tap cells, which the flow places every 13 um,
+  offset by half that in every other row. The channels between the PE
+  columns are 9.2 um wide, so their pieces of row (2576 of them) often got
+  no tap, and their n-well floated. LVS found it as a mismatch in the
+  grouping of the decap cells, which sit in those wells. `taps.tcl` adds a
+  tap to every pair of rows that shares an n-well and has none: 1295 taps.
+  A tap in every piece of row was the first try; it left no room for the
+  9.2 um wide root buffer of the PE clock tree.
+* **Cells added after synthesis without power connections in the netlist.**
+  The clock tree buffers and the cells of timing repair had no power pins
+  in the exported netlist, so LVS saw their supplies as unconnected. The
+  flow now connects every instance's power pins (`global_connect`) before
+  routing and before writing the netlist.
+* **Antennas: 2 nets in the PE, 779 in the chip.** The flow now repairs them
+  after global routing, with diodes and jumps to higher layers, and after
+  detailed routing it checks, repairs and routes again up to three times:
+  135, 21 and 7 nets, then 1. The one left is a leaf net of the register
+  clock tree (`clknet_7_125__leaf_aclk_regs`), with one pin over the limit.
+* **The GDS itself.** Magic took more than 15 minutes and 6.8 GB to write
+  the chip's GDS, and its GDS had 6 implant errors (psdm and nsdm, at the
+  boundary between cells) that the cells' own layouts do not have. KLayout
+  writes it in 23 seconds and without them. In the first KLayout version, the
+  cleanup of unused library cells deleted cells that other cells contain:
+  every inv_2, nand2_2 and nor2_2 of the chip disappeared, and LVS caught
+  it.
+
+The checks cost 2 MHz (194 to 192 MHz): the diodes and the extra taps take
+room in the placement and move cells on the critical path. The routed netlist
+with the diodes and taps passes the gate-level simulation as before (15
+tests, registers starting at 0 and at 1).
+
+Not covered yet:
+
+* the last antenna net (a diode by hand, or another round of repair);
+* IR drop (the voltage lost on the power grid under load) and
+  electromigration;
+* metal fill and density rules, which the foundry needs before
+  manufacturing;
+* Magic's DRC on the whole chip, as a second opinion (it ran on the PE);
+* the hierarchical arrays (`sys_*_hier`): their flow has the taps and the
+  antenna repair, but was not run again.
+
+# FPGA prototype: Xilinx Zynq-7000 (Vivado)
 
 Flow: `syn/vivado/run.tcl`, Vivado 2023.2, device xc7z020clg400-1,
 out-of-context synthesis and implementation at a 6 ns clock target. Numbers

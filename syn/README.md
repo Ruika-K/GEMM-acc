@@ -189,6 +189,38 @@ buffers of the top level), and the duty of the SRAM chip selects, from which
 VCD files (hundreds of MB) are deleted after the analysis unless
 `--keep-vcd` is given.
 
+### Sign-off checks
+
+```bash
+python3 syn/asic/signoff.py pe_m4_macro             # the PE macro
+python3 syn/asic/signoff.py chip_8_m4               # the chip (needs the PE's results)
+python3 syn/asic/signoff.py chip_8_m4 --steps lvs   # one step; --parse re-reads the reports
+```
+
+Needs the routed PE macro and chip (`pnr.py pe_m4_macro chip_8_m4`) and
+Magic >= 8.3.411 (the PDK's tech file asks for it; Ubuntu's 8.3.105 is too
+old), Netgen and KLayout, for example from nixpkgs:
+
+```bash
+nix build --no-link --print-out-paths nixpkgs#magic-vlsi nixpkgs#netgen-vlsi nixpkgs#klayout
+```
+
+`signoff.py` takes them from `MAGIC`, `NETGEN` and `KLAYOUT` or the PATH.
+Steps, all by default: `patches` (`min_area.py`: metal pieces below the
+minimum area of their layer, and patches that keep the spacing), `gds`
+(`def2gds.py`, KLayout: the DEF with the cells' GDS and the patches; a
+second GDS for LVS with the SRAMs as black boxes), `drc_klayout` (the PDK's
+`sky130A_mr.drc`; about 1.5 hours for the chip), `drc_magic` (PE only),
+`lvs` (Magic extracts, Netgen compares with the routed netlist written with
+power pins) and `antenna` (OpenROAD). Results in `signoff_results.csv`.
+
+The place and route scripts do their part: `taps.tcl` adds a well tap to
+every pair of rows that shares an n-well and has none (`tapcell` leaves some
+in short pieces of row between macros), `repair_antennas` runs after global
+routing and, up to three times, after detailed routing, and
+`global_connect` gives every instance its power pins before routing and
+before the netlist is written.
+
 ### Hierarchical flow
 
 For the 16 x 16 arrays the full flow runs hierarchically: the PE is placed,
