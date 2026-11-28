@@ -865,7 +865,7 @@ the typical corner. Numbers in `syn/asic/power_results.csv`.
 The simulation clock is 10 ns: the OpenRAM simulation models put the read
 data 3 ns after the falling edge, which a 5 ns clock does not leave room for.
 Power is therefore given at 100 MHz. Dynamic power scales with the frequency
-(leakage is 0.2 mW); at the 194 MHz of the slow corner it would be 1.9 times
+(leakage is 0.2 mW); at the 192 MHz of the slow corner it would be 1.9 times
 as much. Energy per operation does not depend on the frequency.
 
 The SRAM models charge the energy of a full access on every clock edge,
@@ -876,16 +876,16 @@ as the models say, and counted only in the cycles in which a port is selected
 (from the duty of its chip select in the simulation). The truth is in
 between, closer to the second.
 
-Without clock gating (as first measured) and with it (the chip as it is now):
+Without clock gating (as first measured) and with it (the chip as it is now, measured again on the layout after the sign-off changes: within 0.3 mW of the layout before them):
 
 | 100 MHz, typical corner | compute, without | compute, with | idle, without | idle, with |
 |---|---|---|---|---|
 | Total, SRAMs as modelled / only when selected | 243 / 177 mW | **221 / 155 mW** | 194 / 119 mW | **87 / 12 mW** |
 | PE array (64 macros, their own clock trees included) | 85.6 mW | 85.4 mW | 42.7 mW | 0.0 mW |
 | SRAMs, as modelled / only when selected | 75.1 / 8.8 mW | 75.1 / 8.8 mW | 75.1 / 0 mW | 75.1 / 0 mW |
-| Clock tree of the top level | 43.1 mW | 21.1 mW | 43.1 mW | 6.8 mW |
-| Everything else (skew lines, final adders, FIFO, control, AXI) | 39.5 mW | 39.4 mW | 33.1 mW | 4.8 mW |
-| Energy per multiply-accumulate | 48.8 / 35.5 pJ | **44.4 / 31.0 pJ** | | |
+| Clock tree of the top level | 43.1 mW | 21.2 mW | 43.1 mW | 7.1 mW |
+| Everything else (skew lines, final adders, FIFO, control, AXI) | 39.5 mW | 39.3 mW | 33.1 mW | 4.8 mW |
+| Energy per multiply-accumulate | 48.8 / 35.5 pJ | **44.4 / 31.1 pJ** | | |
 | Efficiency (2 operations per multiply-accumulate) | 0.041 / 0.056 TOPS/W | 0.045 / 0.064 TOPS/W | | |
 | OpenSTA's default activity instead (inputs toggle in 10 % of cycles) | 196 mW | 134 mW | 196 mW | 134 mW |
 
