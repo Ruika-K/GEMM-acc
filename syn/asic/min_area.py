@@ -10,6 +10,9 @@ and the jog (0.19 um2 where met3 needs 0.24 um2). The router reports no
 violation; Magic and KLayout both flag them. Each piece is the union of the
 wire segments and via pads of one net on one layer that touch each other.
 
+It also fills the outer corner of turns written with an extension of 0,
+which leave the shape narrower than the minimum width across the corner.
+
 A patch extends a piece along its longer side, on both ends or on one, until
 it has the area; it is only taken if it stays the layer's minimum spacing
 away from every shape of another net on that layer (routed wires, via pads,
@@ -199,6 +202,65 @@ def route_shapes(text, section, layers, vias, dbu, want):
     return shapes
 
 
+def zero_ext_corners(text, layers, vias, dbu, want):
+    """Corners where a route turns at a point written with an extension of
+    0 ("( * y 0 )"): both wires stop at the centre line, the outer corner is
+    cut by half a width on each side, and the shape is narrower than the
+    minimum width across the cut (KLayout's euclidean m2.1). Returns
+    (net, layer, square of the wire's width at the corner)."""
+    out = []
+    sec = re.search(r"^NETS \d+ ;(.*?)^END NETS", text, flags=re.M | re.S)
+    if not sec:
+        return out
+    for m in re.finditer(r"^\s*- (\S+)(.*?);\s*$", sec.group(1), flags=re.M | re.S):
+        net, body = m.group(1), m.group(2)
+        for part in re.split(r"\+ (?:ROUTED|FIXED|COVER|NOSHIELD)|\bNEW\b", body)[1:]:
+            toks = re.findall(r"\(|\)|[^\s()]+", part)
+            if not toks:
+                continue
+            layer = toks[0]
+            events, last, i = [], None, 1
+            while i < len(toks):
+                t = toks[i]
+                if t == "(":
+                    j = toks.index(")", i)
+                    vals = toks[i + 1:j]
+                    x = last[0] if vals[0] == "*" else int(vals[0]) / dbu
+                    y = last[1] if vals[1] == "*" else int(vals[1]) / dbu
+                    ext = int(vals[2]) / dbu if len(vals) > 2 else None
+                    last = (x, y)
+                    events.append(("pt", x, y, ext, layer))
+                    i = j + 1
+                elif t in vias:
+                    events.append(("via",))
+                    other = [vl for vl in vias[t] if vl in layers and vl != layer]
+                    if other:
+                        layer = other[0]
+                    i += 1
+                elif t == "RECT":
+                    i = toks.index(")", i + 1) + 1
+                else:
+                    i += 1
+            for k in range(1, len(events) - 1):
+                # The point before: a via in between sits at that point and
+                # only changes the layer the segment to this one is on.
+                j = k - 1
+                while j >= 0 and events[j][0] == "via":
+                    j -= 1
+                if j < 0:
+                    continue
+                a, b, c = events[j], events[k], events[k + 1]
+                if b[0] != "pt" or c[0] != "pt" or b[3] != 0 or b[4] not in want:
+                    continue
+                d1 = (b[1] - a[1], b[2] - a[2])
+                d2 = (c[1] - b[1], c[2] - b[2])
+                if (d1[0] == 0) == (d2[0] == 0):          # not a turn
+                    continue
+                w = layers[b[4]]["width"] / 2
+                out.append((net, b[4], (b[1] - w, b[2] - w, b[1] + w, b[2] + w)))
+    return out
+
+
 def components(rects):
     """Groups of touching rectangles."""
     n = len(rects)
@@ -322,6 +384,15 @@ def main():
             else:
                 print(f"UNFIXED {layer} {net} {x1:.3f} {y1:.3f} {x2:.3f} {y2:.3f} {a:.4f}")
     print(f"# {found} pieces below the minimum area, {fixed} patched", file=sys.stderr)
+    corners = zero_ext_corners(text, layers, vias, dbu, want)
+    filled = 0
+    for net, layer, sq in corners:
+        if clear(layer, net, sq, layers[layer]["spacing"]):
+            filled += 1
+            print(f"PATCH {layer} {sq[0]:.3f} {sq[1]:.3f} {sq[2]:.3f} {sq[3]:.3f}")
+        else:
+            print(f"UNFIXED {layer} {net} {sq[0]:.3f} {sq[1]:.3f} {sq[2]:.3f} {sq[3]:.3f} corner")
+    print(f"# {len(corners)} corners without extension, {filled} filled", file=sys.stderr)
 
 
 if __name__ == "__main__":
