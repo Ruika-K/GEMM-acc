@@ -363,7 +363,8 @@ estimate_parasitics -global_routing
 # list and therefore kept from every other step). Without this, the routed
 # chip had 779 nets over the limits (signoff.py, antenna).
 unset_dont_use sky130_fd_sc_hd__diode_2
-repair_antennas sky130_fd_sc_hd__diode_2 -iterations 5
+# Its own rerouting allows the overflows that global routing above allows.
+repair_antennas sky130_fd_sc_hd__diode_2 -iterations 5 -allow_congestion
 set_dont_use sky130_fd_sc_hd__diode_2
 check_placement
 
