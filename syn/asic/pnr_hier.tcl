@@ -163,6 +163,8 @@ if {$placed != $rows * $cols} { error "placed $placed macros, expected [expr {$r
 
 cut_rows -halo_width_x 0.46 -halo_width_y 0
 tapcell -distance 13 -tapcell_master sky130_fd_sc_hd__tapvpwrvgnd_1
+source [file join [file dirname [info script]] taps.tcl]
+tap_every_row
 
 # Pins of the block. A bus on the west or east edge carries one slice per row
 # (a_i: row i is bits 8i .. 8i+7), a bus on the north or south edge one slice

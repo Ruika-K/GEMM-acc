@@ -231,6 +231,8 @@ if {$n_pe != $rows * $cols} { error "expected [expr {$rows * $cols}] PE macros" 
 
 cut_rows -halo_width_x 0.46 -halo_width_y 0
 tapcell -distance 13 -tapcell_master sky130_fd_sc_hd__tapvpwrvgnd_1
+source [file join [file dirname [info script]] taps.tcl]
+tap_every_row
 
 # Pins: AXI4-Lite and the input stream on the west edge, the output stream on
 # the north edge, clock, reset and interrupt on the south edge.
