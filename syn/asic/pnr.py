@@ -353,9 +353,11 @@ def run(name, job, threads=4):
     env["PNR_NETLIST"] = str(netlist)
     t0 = time.time()
     with open(work / "pnr.log", "w") as f:
+        # In the job's directory: the antenna repair's rerouting writes a
+        # congestion report under a garbled name into the working directory.
         subprocess.run(["openroad", "-no_init", "-exit", "-threads", str(threads),
                         str(HERE / script)],
-                       stdout=f, stderr=subprocess.STDOUT, env=env, check=True)
+                       stdout=f, stderr=subprocess.STDOUT, env=env, check=True, cwd=work)
     if job.get("macro"):
         timing_models(job, work)
     if job.get("hier"):
