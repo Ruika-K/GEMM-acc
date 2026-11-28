@@ -35,4 +35,4 @@ bcast_16_m4_est,gemm_array_bcast,wire length,global,50,3638633,1986391,55,5.0,24
 pe_m4_macro,gemm_pe,"timing, macro",detailed,55,13983,8887,70,5.0,403,199,679,1,1,0.096,-0.00,,0,21775,,,,110
 sys_8_m4_hier,gemm_array,"timing, hierarchical",detailed,50,1181578,946155,82,5.0,397,199,628,2,2,0.176,-0.12,,0,130026,198,-0.236,,105
 sys_16_m4_hier,gemm_array,"timing, hierarchical",detailed,50,4452836,3682426,84,5.0,390,198,615,2,5,0.162,-0.23,,0,359015,196,-1.341,,307
-chip_8_m4,gemm_top,"timing, hierarchical",detailed,50,9722077,5087857,53,5.0,381,194,601,3,4,0.110,2.64,0.008,0,2034365,196,-1.704,0.026,2276
+chip_8_m4,gemm_top,"timing, hierarchical",detailed,50,9722077,5089425,53,5.0,378,192,598,0,4,0.127,2.59,0.018,0,2028899,192,-1.778,-0.085,2594
