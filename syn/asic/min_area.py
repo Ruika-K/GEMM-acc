@@ -39,9 +39,19 @@ def lef_rules(path):
             continue
         width = re.search(r"^\s*WIDTH ([\d.]+)", body, flags=re.M)
         area = re.search(r"^\s*AREA ([\d.]+)", body, flags=re.M)
-        space = re.search(r"^\s*SPACING ([\d.]+)\s*;", body, flags=re.M)
+        # Minimum spacing by the width of the wider shape: a plain SPACING
+        # rule, or the SPACINGTABLE (sky130 has its plain rules commented out
+        # and a table instead, met3: 0.3 um, 0.4 um next to shapes 3 um wide
+        # and more). The largest value of a row is taken (parallel run length
+        # is not looked at, on the safe side).
+        table = [(0.0, float(v)) for v in re.findall(r"^\s*SPACING ([\d.]+)\s*;", body, flags=re.M)]
+        tm = re.search(r"SPACINGTABLE(.*?);", body, flags=re.S)
+        if tm:
+            for w, row in re.findall(r"WIDTH\s+([\d.]+)\s+([\d.\s]+)", tm.group(1)):
+                table.append((float(w), max(float(v) for v in row.split())))
+        table.sort()
         layers[m.group(1)] = dict(width=float(width.group(1)), area=float(area.group(1)) if area else 0.0,
-                                  spacing=float(space.group(1)) if space else 0.0)
+                                  spacing=max((s for _, s in table), default=0.0), table=table)
     vias = {}
     for m in re.finditer(r"^VIA (\S+)(.*?)^END \1", text, flags=re.M | re.S):
         rects = defaultdict(list)
@@ -252,13 +262,22 @@ def main():
                 for by in range(int(r[1] // 2), int(r[3] // 2) + 1):
                     bucket[(layer, bx, by)].append((net, r))
 
+    def spacing(layer, a, b):
+        w = max(min(a[2] - a[0], a[3] - a[1]), min(b[2] - b[0], b[3] - b[1]))
+        sp = 0.0
+        for wmin, s in layers[layer]["table"]:
+            if w >= wmin:
+                sp = s
+        return sp
+
     def clear(layer, net, r, sp):
         for bx in range(int((r[0] - sp) // 2), int((r[2] + sp) // 2) + 1):
             for by in range(int((r[1] - sp) // 2), int((r[3] + sp) // 2) + 1):
                 for other, o in bucket.get((layer, bx, by), ()):
                     if other == net:
                         continue
-                    if r[0] - sp < o[2] and o[0] < r[2] + sp and r[1] - sp < o[3] and o[1] < r[3] + sp:
+                    s = spacing(layer, r, o)
+                    if r[0] - s < o[2] and o[0] < r[2] + s and r[1] - s < o[3] and o[1] < r[3] + s:
                         return False
         return True
 
@@ -279,12 +298,20 @@ def main():
             # the area needs (with some margin), against the bounding box's area.
             need = rule["area"] * 1.05
             done = None
-            if w >= h:
-                ext = snap(max(0.0, need / h - w))
-                cands = [(x1 - snap(ext / 2), y1, x2 + snap(ext / 2), y2), (x1 - ext, y1, x2, y2), (x1, y1, x2 + ext, y2)]
-            else:
-                ext = snap(max(0.0, need / w - h))
-                cands = [(x1, y1 - snap(ext / 2), x2, y2 + snap(ext / 2)), (x1, y1 - ext, x2, y2), (x1, y1, x2, y2 + ext)]
+            # Candidates: longer along either side, the extension split between
+            # the two ends in steps of a fifth; then wider across.
+            cands = []
+            for horizontal in ((True, False) if w >= h else (False, True)):
+                if horizontal:
+                    ext = snap(max(0.0, need / h - w))
+                    for k in (0.5, 0.0, 1.0, 0.2, 0.8, 0.4, 0.6):
+                        lo = snap(ext * k)
+                        cands.append((x1 - lo, y1, x2 + snap(ext - lo), y2))
+                else:
+                    ext = snap(max(0.0, need / w - h))
+                    for k in (0.5, 0.0, 1.0, 0.2, 0.8, 0.4, 0.6):
+                        lo = snap(ext * k)
+                        cands.append((x1, y1 - lo, x2, y2 + snap(ext - lo)))
             for c in cands:
                 if clear(layer, net, c, rule["spacing"]):
                     done = c
