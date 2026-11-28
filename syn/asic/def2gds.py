@@ -8,6 +8,7 @@
 #
 #   -rd def=<file> -rd out=<file> -rd map=<layer map>
 #   -rd lefs="<lef> ..." -rd gds="<gds> ..." -rd patches=<file, optional>
+#   -rd labels="<name> <layer> <datatype> <x> <y>; ..."   optional
 # ------------------------------------------------------------------------------
 import pya
 
@@ -45,6 +46,15 @@ if patches:
         top.shapes(li).insert(pya.DBox(x1, y1, x2, y2))
         n += 1
     print(f"def2gds: {n} patches")
+
+# Text labels (power nets of a macro, which has no pins for them in its DEF):
+# "name layer datatype x y; ..." in um.
+if globals().get("labels"):
+    for item in labels.split(";"):
+        f = item.split()
+        if len(f) == 5:
+            top.shapes(ly.layer(int(f[1]), int(f[2]))).insert(pya.DText(f[0], float(f[3]), float(f[4])))
+            print(f"def2gds: label {f[0]}")
 
 # Cells of the GDS libraries that the design does not use. prune_cell keeps
 # subcells used elsewhere (delete_cell_rec does not: some library cells

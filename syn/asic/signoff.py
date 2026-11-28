@@ -110,8 +110,25 @@ class Job:
             subprocess.run([sys.executable, HERE / "min_area.py", self.work / f"{self.top}.def", TECH_LEF,
                             "--macro-lef", *macro_lefs], stdout=fh, check=True)
 
+    def power_labels(self):
+        """Labels for the power nets of a macro, whose DEF has no pins for
+        them: on the first met4 stripe of each (met4 pin layer 71/16, where a
+        label is a port to Magic; 71/5 is text only). The
+        extraction then names the macro's power ports, and the parent's
+        connections to them match the netlist's."""
+        text = (self.work / f"{self.top}.def").read_text()
+        out = []
+        for net in ("VPWR", "VGND"):
+            m = re.search(rf"^\s*- {net} .*?ROUTED met4 \d+ \+ SHAPE STRIPE \( (\d+) (\d+) \) \( (?:\*|\d+) (\d+) \)",
+                          text, flags=re.M | re.S)
+            if m:
+                x, y1, y2 = int(m.group(1)) / 1000, int(m.group(2)) / 1000, int(m.group(3)) / 1000
+                out.append(f"{net} 71 16 {x:.3f} {(y1 + y2) / 2:.3f}")
+        return ";".join(out)
+
     def gds(self):
         cells = [REF / "gds" / "sky130_fd_sc_hd.gds"] + ([self.macro_gds] if self.macro else [])
+        labels = "" if self.chip else self.power_labels()
         for out, extra in ((self.f(".gds"), SRAM_GDS if self.chip else []), (self.f("_lvs.gds"), [])):
             if out.name.endswith("_lvs.gds") and not self.chip:
                 continue          # without SRAMs the two are the same
@@ -119,7 +136,8 @@ class Job:
                  "-rd", f"def={self.work / (self.top + '.def')}", "-rd", f"out={out}",
                  "-rd", f"map={LAYER_MAP}", "-rd", "lefs=" + " ".join(map(str, self.lefs())),
                  "-rd", "gds=" + " ".join(map(str, cells + extra)),
-                 "-rd", f"patches={self.f('_patches.txt')}"], self.f(f"_{out.stem}.log"))
+                 "-rd", f"patches={self.f('_patches.txt')}", "-rd", f"labels={labels}"],
+                self.f(f"_{out.stem}.log"))
 
     def drc_klayout(self):
         run([tool("klayout"), "-b", "-r", KLAYOUT_DRC, "-rd", f"input={self.f('.gds')}", "-rd", f"top_cell={self.top}",
@@ -168,7 +186,15 @@ ext2spice -o {self.f('_layout.spice')}""", f"{self.top}_extract")
         # grid (clock tree, repair, fillers) get theirs from global_connect.
         tcl = self.out / "netlist_pwr.tcl"
         reads = "\n".join(f"read_lef {p}" for p in self.lefs())
-        tcl.write_text(f"{reads}\nread_db {self.work / (self.top + '.odb')}\nglobal_connect\n"
+        # A macro has no pins for its power nets; ports for them, as its LEF
+        # and the parent's netlist have.
+        ports = ("foreach n {VPWR VGND} {\n"
+                 "    set net [[ord::get_db_block] findNet $n]\n"
+                 "    if {[[ord::get_db_block] findBTerm $n] eq \"NULL\"} {\n"
+                 "        set bt [odb::dbBTerm_create $net $n]\n"
+                 "        $bt setIoType INOUT\n"
+                 "    }\n}\n") if not self.chip else ""
+        tcl.write_text(f"{reads}\nread_db {self.work / (self.top + '.odb')}\nglobal_connect\n{ports}"
                        f"write_verilog -include_pwr_gnd {self.f('_pwr.v')}\n")
         run([tool("openroad"), "-no_init", "-exit", tcl], self.out / "netlist_pwr.log")
         lvs = self.out / "lvs.tcl"
