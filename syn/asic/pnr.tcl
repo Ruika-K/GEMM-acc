@@ -252,7 +252,7 @@ if {$droute} {
     detailed_route -output_drc [file join $out drc.rpt] -verbose 1
     # Antennas left once the wires are exact (the repair above worked on the
     # global routes): diodes once more and those routes again, as ORFS does.
-    for {set i 0} {$i < 3 && [check_antennas] > 0} {incr i} {
+    for {set i 0} {$i < 6 && [check_antennas] > 0} {incr i} {
         unset_dont_use sky130_fd_sc_hd__diode_2
         repair_antennas sky130_fd_sc_hd__diode_2 -iterations 1
         set_dont_use sky130_fd_sc_hd__diode_2

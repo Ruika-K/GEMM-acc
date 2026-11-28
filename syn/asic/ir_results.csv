@@ -1,0 +1,5 @@
+job,case,sources,clk_mhz,power_mw,vpwr_worst_mv,vpwr_avg_mv,vgnd_worst_mv,vgnd_avg_mv,pe_internal_mv,total_worst_mv,fmax_ss_mhz,fmax_ss_low_mhz,fmax_ss_ir_mhz
+chip_8_m4,bumps,"flip-chip bumps, 140 um pitch, every third",100,222.0,1.51,0.18,2.54,0.14,0.61,4.66,189,126,
+chip_8_m4,bumps,"flip-chip bumps, 140 um pitch, every third",189,419.9,2.86,0.34,4.80,0.27,1.16,8.82,189,126,186.4
+chip_8_m4,edge,core edges: met5 stripe ends and power ring,100,222.0,8.27,2.40,8.09,2.40,0.61,16.97,189,126,
+chip_8_m4,edge,core edges: met5 stripe ends and power ring,189,419.9,15.64,4.54,15.30,4.54,1.16,32.10,189,126,179.0

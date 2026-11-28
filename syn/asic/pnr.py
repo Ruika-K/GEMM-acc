@@ -392,7 +392,7 @@ def sram_libs(work):
     return out
 
 
-def sta_flat(job, work, mdir, cell):
+def sta_flat(job, work, mdir, cell, log=None):
     """Flat timing analysis of a hierarchical job, see sta_flat.tcl."""
     env = dict(os.environ, PDK_ROOT=PDK_ROOT, STA_TOP=job["top"],
                STA_EXTRA_LIBS=" ".join(str(work / f.name) for f in SRAM_LIBS) if job.get("chip") else "",
@@ -402,7 +402,7 @@ def sta_flat(job, work, mdir, cell):
                STA_MACRO_V=str(mdir / f"{cell}.pnr.v"),
                STA_MACRO_SPEF=str(mdir / f"{cell}.spef"),
                STA_MACRO_CELL=cell)
-    with open(work / "sta_flat.log", "w") as f:
+    with open(log or work / "sta_flat.log", "w") as f:
         subprocess.run(["sta", "-no_init", "-exit", str(HERE / "sta_flat.tcl")],
                        stdout=f, stderr=subprocess.STDOUT, env=env, check=True)
 

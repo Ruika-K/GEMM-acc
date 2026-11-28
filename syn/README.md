@@ -132,6 +132,11 @@ Needs the `sky130_sram_macros` library next to `sky130_fd_sc_hd` in the PDK
   register in front of each write port and one that holds the read data.
 * `pnr_top.tcl` places the PE macros as `pnr_hier.tcl` does and the SRAMs
   around them (A west, B north, bias south), then routes everything. The
+  power grid: a ring around the core (met5 / met4) that every stripe and
+  rail reaches, met5 stripes 4 um wide, two pairs per row of PEs, and a pair
+  of met4 straps in every channel (sized by `ir_drop.py`, see
+  `docs/results.md`). After detailed routing, antennas are checked and
+  repaired up to six times. The
   timing models of the SRAMs have one corner, used for all three, and a
   maximum input transition of 0.04 ns that the flow removes from its copies
   (`sram_libs()` in `pnr.py`). `PNR_RESUME=1` (or `route`) starts again from
@@ -220,6 +225,28 @@ in short pieces of row between macros), `repair_antennas` runs after global
 routing and, up to three times, after detailed routing, and
 `global_connect` gives every instance its power pins before routing and
 before the netlist is written.
+
+### IR drop
+
+```bash
+python3 syn/asic/power.py chip_8_m4 --keep-vcd   # the activity, kept for ir_drop.py
+python3 syn/asic/ir_drop.py chip_8_m4            # static IR drop; --parse re-reads the reports
+```
+
+`ir_drop.tcl` runs OpenROAD's PDNSim on the routed chip with the currents of
+the compute workload: the standard cells and SRAMs from their libraries and
+the simulated activity, the PE macros (no power in their timing model) from
+the power analysis, per instance (`set_pdnsim_inst_power`). A second run on
+the PE's own layout, with the activity of the PE that draws the most and the
+supply where the chip's met5 stripes connect to it, gives the drop inside a
+PE. Two ways of feeding the chip: from the edges of the core (voltage source
+files with the ends of the met5 stripes and points along the met5 segments
+of the ring) and a flip-chip bump array (PDNSim's `BUMPS`). The drop is
+scaled from the 100 MHz of the simulation to the slow-corner frequency, and
+`sta_flat.tcl` runs once more with the slow-corner library at 1.40 V
+(`STA_SS_LIB`) to turn the drop into frequency. Results in
+`ir_results.csv`, reports in `syn/build/asic/chip_8_m4/pnr/ir_drop/`, a map
+of the drop in `docs/chip_8_m4_ir.svg`.
 
 ### Hierarchical flow
 

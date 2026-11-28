@@ -155,8 +155,12 @@ set b_y  [expr {$arr_y + $arr_h + $gap_n}]
 
 set core_w [snap [expr {$edge + max(max($arr_x + $arr_w, $b_x + $b_w), $s_x + $s_w)}] 0.46]
 set core_h [snap [expr {$edge + $b_y + $b_h}] 5.44]
-set margin_x 5.52
-set margin_y 5.44
+# Core to die edge: room for the power ring (see "power grid").
+set ring_w 6.0
+set ring_s 2.0
+set ring_off 2.0
+set margin_x [snap [expr {$ring_off + 2 * $ring_w + $ring_s + 4.0}] 0.46]
+set margin_y [snap [expr {$ring_off + 2 * $ring_w + $ring_s + 4.0}] 5.44]
 set die_w [expr {$core_w + 2 * $margin_x}]
 set die_h [expr {$core_h + 2 * $margin_y}]
 set cx0  $margin_x
@@ -254,19 +258,31 @@ global_connect
 
 set_voltage_domain -power VPWR -ground VGND
 define_pdn_grid -name grid
-add_pdn_stripe -grid grid -layer met1 -width 0.48 -followpins
+# A ring around the core (met5 along the top and bottom, met4 along the
+# sides), which every stripe and rail reaches: the supply can come in from
+# all four sides. Without it, the stripes were trimmed back to the last
+# connection below them, and the only way in was the ends of the met5
+# stripes that happened to reach the left and right edge (ir_drop.py: 0.2 V
+# of drop with the supply at the edges).
+add_pdn_ring -grid grid -layers {met5 met4} -widths $ring_w -spacings $ring_s -core_offsets $ring_off
+add_pdn_stripe -grid grid -layer met1 -width 0.48 -followpins -extend_to_core_ring
 # The grid of the array (see pnr_hier.tcl), continued over the whole core: a
 # pair of met4 straps in every channel between PE columns and at the same
-# pitch elsewhere, a pair of met5 straps across every row of PEs and at the
-# same pitch elsewhere. Offsets are relative to the core origin.
+# pitch elsewhere; two pairs of met5 straps, 4 um wide, across every row of
+# PEs and at the same pitch elsewhere (one pair of 1.6 um stripes before: the
+# met5 stripes carry the current across the die). Offsets are relative to
+# the core origin.
 set w4 1.6
 set s4 1.6
-set w5 1.6
+set w5 4.0
+set n5 2
+set p5 [expr {$py / $n5}]
 set off4 [expr {fmod($arr_x - $cx0, $px) + ($chx - 2 * $w4 - $s4) / 2.0}]
-set off5 [expr {fmod($arr_y - $cy0, $py) + $chy + $mh * 0.3}]
-add_pdn_stripe -grid grid -layer met4 -width $w4 -spacing $s4 -pitch $px -offset [format %.2f $off4]
-add_pdn_stripe -grid grid -layer met5 -width $w5 -spacing [format %.2f [expr {$mh * 0.35 - $w5}]] \
-    -pitch $py -offset [format %.2f $off5]
+set off5 [expr {fmod($arr_y - $cy0 + $chy + $mh * 0.3 / $n5, $p5)}]
+add_pdn_stripe -grid grid -layer met4 -width $w4 -spacing $s4 -pitch $px -offset [format %.2f $off4] \
+    -extend_to_core_ring
+add_pdn_stripe -grid grid -layer met5 -width $w5 -spacing [format %.2f [expr {$p5 * 0.35 - $w5}]] \
+    -pitch [format %.2f $p5] -offset [format %.2f $off5] -extend_to_core_ring
 add_pdn_connect -grid grid -layers {met1 met4}
 add_pdn_connect -grid grid -layers {met4 met5}
 
@@ -373,7 +389,7 @@ check_placement
 detailed_route -output_drc [file join $out drc.rpt] -verbose 1
 # Antennas left once the wires are exact (the repair above worked on the
 # global routes): diodes once more and those routes again, as ORFS does.
-for {set i 0} {$i < 3 && [check_antennas] > 0} {incr i} {
+for {set i 0} {$i < 6 && [check_antennas] > 0} {incr i} {
     unset_dont_use sky130_fd_sc_hd__diode_2
     repair_antennas sky130_fd_sc_hd__diode_2 -iterations 1 -allow_congestion
     set_dont_use sky130_fd_sc_hd__diode_2

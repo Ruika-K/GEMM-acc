@@ -7,8 +7,9 @@ is the main target, and an FPGA implementation used as a prototype.
 |------|-------|
 | ASIC, sky130, synthesis and pre-layout timing | done |
 | ASIC, sky130, place and route of the array | done up to 16 x 16 (16 x 16 hierarchically, with the PE as a hard macro) |
-| ASIC, sky130, place and route of the complete chip | done: 8 x 8 array, SRAM macros, clock gating, 9.7 mm2, 192 MHz at the slow corner |
-| ASIC, sky130, sign-off checks (DRC, LVS, antenna) | done for the PE macro (all clean) and the chip (DRC clean, LVS match, 1 antenna net left) |
+| ASIC, sky130, place and route of the complete chip | done: 8 x 8 array, SRAM macros, clock gating, 9.9 mm2, 189 MHz at the slow corner |
+| ASIC, sky130, sign-off checks (DRC, LVS, antenna) | done for the PE macro and the chip: all clean |
+| ASIC, sky130, static IR drop of the chip | done: 32 mV worst (1.8 %) with the supply from the core edges, after a power ring and wider met5 stripes (383 mV before) |
 | ASIC, sky130, power of the chip from simulated activity | done: 31 - 44 pJ per multiply-accumulate; idle 12 mW at 100 MHz with clock gating (119 mW without) |
 | FPGA, Lattice ECP5 (Yosys + nextpnr) | done |
 | FPGA, Xilinx Zynq-7000 (Vivado) | done |
@@ -624,31 +625,33 @@ an 8 x 8 array, `MUL_CS = 1`, `ACC_SEG = 4`, default memory sizes.
 
 | | |
 |---|---|
-| Die | 2.79 x 3.49 mm = 9.72 mm2 |
+| Die | 2.82 x 3.52 mm = 9.92 mm2 |
 | Macros | 64 PEs (0.90 mm2); 16 OpenRAM SRAMs (3.80 mm2): 4 x 2 KB each for A and B, 8 x 1 KB for the bias |
 | Standard cells | 22 300, 0.42 mm2: skew and de-skew lines, final adders, output FIFO, control, AXI |
-| Fmax between registers, typical / slow / fast | **378 / 192 / 598 MHz** |
+| Fmax between registers, typical / slow / fast | **373 / 189 / 567 MHz** |
 | Clock skew between neighbouring PEs, slow corner | 0.008 ns at most (hand-built H-tree, see below) |
-| Paths into and out of the SRAMs, slow corner, 5 ns | worst slack -0.09 ns, with the SRAMs' own times from their models (see below) |
-| Clock gate enable, slow corner | met, +0.44 ns |
-| Hold between registers | met at every corner, worst +0.127 ns |
+| Paths into and out of the SRAMs, slow corner, 5 ns | worst slack -0.05 ns, with the SRAMs' own times from their models (see below) |
+| Clock gate enable, slow corner | met, +0.61 ns |
+| Hold between registers | met at every corner, worst +0.110 ns |
 | Routing violations | 0 (the router's own check) |
-| Sign-off checks | DRC with the foundry rules: 0 errors; LVS: match; antenna: 1 net left (see [Sign-off checks](#asic-sign-off-checks)) |
-| Added for sign-off | 651 antenna diodes, 1295 well taps, 639 metal patches |
-| Power grid | every instance connected to VPWR and VGND |
-| Run time | 43 minutes, plus 2 for the PE macro |
+| Sign-off checks | DRC with the foundry rules: 0 errors; LVS: match; antenna: 0 (see [Sign-off checks](#asic-sign-off-checks)) |
+| Added for sign-off | 699 antenna diodes, 1295 well taps, 644 metal patches |
+| Power grid | a ring around the core, met5 stripes 4 um wide (two pairs per row of PEs), met4 straps in the channels; static IR drop 32 mV worst with the supply from the core edges (see [IR drop](#asic-ir-drop)) |
+| Run time | 40 minutes, plus 2 for the PE macro |
 | Gate-level simulation | the routed netlist with the SRAM models passes all 15 top-level tests, with every register starting at 0 and again at 1; cycle counts equal to the RTL (run again on the layout after the sign-off changes) |
 
-**Routed, the chip runs at 192 MHz at the slow corner, above the 162 MHz of
+**Routed, the chip runs at 189 MHz at the slow corner, above the 162 MHz of
 synthesis** (timing repair sizes up cells on the critical paths by more than
 the wires cost, as for the array alone). The array on its own reaches
 197 - 199 MHz; inside the chip, the paths between PEs are as fast as that
 (the worst is inside a single PE, the macro's own limit). The slowest path
-is now inside the output stream, from its tile iterator (-0.21 ns). How the
+is now inside the output stream, from the output FIFO to the tile iterator
+of the output (-0.29 ns). How the
 chip got from 183 to 194 MHz: the clock tree of the PEs (183 to 187 MHz),
 the paths around the array (187 to 193 MHz), and the clock tree as rebuilt
 for clock gating (194 MHz), below. The changes for the sign-off checks
-(diodes and extra well taps, which move cells) cost 2 MHz: 192 MHz.
+(diodes and extra well taps, which move cells) cost 2 MHz, the power grid
+rebuilt for IR drop 3 more: 189 MHz.
 
 Floorplan: the memories sit where their data goes. A (one operand per array
 row) is west of the array, with the macros of lanes 0 - 3 next to rows 0 - 3;
@@ -826,8 +829,8 @@ edge, and the registers inside see the clock 2 - 3 ns later.
 ## Not done yet
 
 * Timing of the SRAM macros from a characterisation that can be trusted.
-* The last 3 % against the array alone (192 against 197 - 199 MHz): the
-  output stream (-0.21 ns), then the paths into the array from registers
+* The last 5 % against the array alone (189 against 197 - 199 MHz): the
+  output stream (-0.29 ns), then the paths into the array from registers
   late in their clock tree.
 * The broadcast baseline at 16 x 16 in a full or hierarchical flow; the
   systolic array has both.
@@ -839,10 +842,10 @@ edge, and the registers inside see the clock 2 - 3 ns later.
   seven of its 32 carry inputs can be non-zero.
 * Booth recoding of the multiplier, which would halve the number of partial
   product rows.
-* The rest of sign-off: the last antenna net, IR drop, metal fill, Magic's
-  DRC on the whole chip, and the checks for the hierarchical arrays (their
-  flow has the same changes, but was not run again). See
-  [Sign-off checks](#asic-sign-off-checks).
+* The rest of sign-off: dynamic IR drop and electromigration, metal fill,
+  Magic's DRC on the whole chip, and the checks for the hierarchical arrays
+  (their flow has the same changes, but was not run again). See
+  [Sign-off checks](#asic-sign-off-checks) and [IR drop](#asic-ir-drop).
 * Finer clock gating: under full load the gate is open, and registers that
   hold their value between operand beats (the input registers, the skew
   lines between tiles) still get every clock edge.
@@ -865,7 +868,7 @@ the typical corner. Numbers in `syn/asic/power_results.csv`.
 The simulation clock is 10 ns: the OpenRAM simulation models put the read
 data 3 ns after the falling edge, which a 5 ns clock does not leave room for.
 Power is therefore given at 100 MHz. Dynamic power scales with the frequency
-(leakage is 0.2 mW); at the 192 MHz of the slow corner it would be 1.9 times
+(leakage is 0.2 mW); at the 189 MHz of the slow corner it would be 1.9 times
 as much. Energy per operation does not depend on the frequency.
 
 The SRAM models charge the energy of a full access on every clock edge,
@@ -876,16 +879,16 @@ as the models say, and counted only in the cycles in which a port is selected
 (from the duty of its chip select in the simulation). The truth is in
 between, closer to the second.
 
-Without clock gating (as first measured) and with it (the chip as it is now, measured again on the layout after the sign-off changes: within 0.3 mW of the layout before them):
+Without clock gating (as first measured) and with it (the chip as it is now, measured again on the final layout, with the power ring: within 1 mW of the layout before the sign-off changes):
 
 | 100 MHz, typical corner | compute, without | compute, with | idle, without | idle, with |
 |---|---|---|---|---|
-| Total, SRAMs as modelled / only when selected | 243 / 177 mW | **221 / 155 mW** | 194 / 119 mW | **87 / 12 mW** |
+| Total, SRAMs as modelled / only when selected | 243 / 177 mW | **222 / 155 mW** | 194 / 119 mW | **87 / 12 mW** |
 | PE array (64 macros, their own clock trees included) | 85.6 mW | 85.4 mW | 42.7 mW | 0.0 mW |
 | SRAMs, as modelled / only when selected | 75.1 / 8.8 mW | 75.1 / 8.8 mW | 75.1 / 0 mW | 75.1 / 0 mW |
-| Clock tree of the top level | 43.1 mW | 21.2 mW | 43.1 mW | 7.1 mW |
+| Clock tree of the top level | 43.1 mW | 22.0 mW | 43.1 mW | 7.0 mW |
 | Everything else (skew lines, final adders, FIFO, control, AXI) | 39.5 mW | 39.3 mW | 33.1 mW | 4.8 mW |
-| Energy per multiply-accumulate | 48.8 / 35.5 pJ | **44.4 / 31.1 pJ** | | |
+| Energy per multiply-accumulate | 48.8 / 35.5 pJ | **44.5 / 31.2 pJ** | | |
 | Efficiency (2 operations per multiply-accumulate) | 0.041 / 0.056 TOPS/W | 0.045 / 0.064 TOPS/W | | |
 | OpenSTA's default activity instead (inputs toggle in 10 % of cycles) | 196 mW | 134 mW | 196 mW | 134 mW |
 
@@ -986,9 +989,9 @@ polygons that would go to the foundry (GDS), with the foundry's rules:
 |---|---|---|
 | DRC, KLayout (front end, back end, off-grid) | 0 | 0 |
 | DRC, Magic (full rule set) | 0 | not run (hours for the chip) |
-| LVS | circuits match (895 devices, 949 nets) | circuits match (21 226 devices, 25 837 nets) |
-| Antenna | 0 | 1 net |
-| Added for it: metal patches / diodes / well taps | 3 / 2 / 0 | 639 / 651 / 1295 |
+| LVS | circuits match (895 devices, 949 nets) | circuits match (21 225 devices, 25 854 nets) |
+| Antenna | 0 | 0 |
+| Added for it: metal patches / diodes / well taps | 3 / 2 / 0 | 644 / 699 / 1295 |
 
 The SRAMs are in the DRC with their own layouts, less five implant and
 well rules that the PDK's deck itself does not apply inside SRAM cells (its
@@ -1010,7 +1013,15 @@ The first runs found these, in the order they were fixed:
   next to wide shapes), so it read none and 12 of its patches came too close
   to their neighbours; it now uses the table. 2 more patches fill the outer
   corner of two met2 turns that the router wrote with no extension past the
-  corner, which leaves the turn narrower than the minimum width.
+  corner, which leaves the turn narrower than the minimum width. Two more
+  mistakes of `min_area.py` showed up on the layout with the power ring:
+  it checked a patch against the shapes of the router but not against the
+  patches it had taken before, so two neighbouring pieces were patched
+  towards each other and ended up 0.27 um apart (m3.2); and it checked the
+  whole patched piece, so a piece that sits diagonally close to a via pad
+  (which the rules allow) had every patch rejected and stayed below the
+  minimum area (m3.6, twice). It now records each patch it takes and checks
+  only what a patch adds.
 * **Wells without a tap.** The n-well of the standard cells reaches the
   supply only through tap cells, which the flow places every 13 um,
   offset by half that in every other row. The channels between the PE
@@ -1027,9 +1038,10 @@ The first runs found these, in the order they were fixed:
   routing and before writing the netlist.
 * **Antennas: 2 nets in the PE, 779 in the chip.** The flow now repairs them
   after global routing, with diodes and jumps to higher layers, and after
-  detailed routing it checks, repairs and routes again up to three times:
-  135, 21 and 7 nets, then 1. The one left is a leaf net of the register
-  clock tree (`clknet_7_125__leaf_aclk_regs`), with one pin over the limit.
+  detailed routing it checks, repairs and routes again up to six times. On
+  the final layout: 132, 11, 3, 2, then 0 nets. (With three rounds, one net
+  of the register clock tree was left on the layout of step 13, two nets on
+  the first layout with the power ring.)
 * **The GDS itself.** Magic took more than 15 minutes and 6.8 GB to write
   the chip's GDS, and its GDS had 6 implant errors (psdm and nsdm, at the
   boundary between cells) that the cells' own layouts do not have. KLayout
@@ -1039,20 +1051,136 @@ The first runs found these, in the order they were fixed:
   it.
 
 The checks cost 2 MHz (194 to 192 MHz): the diodes and the extra taps take
-room in the placement and move cells on the critical path. The routed netlist
-with the diodes and taps passes the gate-level simulation as before (15
+room in the placement and move cells on the critical path. (The power grid
+rebuilt afterwards for IR drop cost 3 more, see [IR drop](#asic-ir-drop).)
+The final routed netlist passes the gate-level simulation as before (15
 tests, registers starting at 0 and at 1).
 
 Not covered yet:
 
-* the last antenna net (a diode by hand, or another round of repair);
-* IR drop (the voltage lost on the power grid under load) and
-  electromigration;
+* dynamic IR drop and electromigration (static IR drop: see
+  [IR drop](#asic-ir-drop));
 * metal fill and density rules, which the foundry needs before
   manufacturing;
 * Magic's DRC on the whole chip, as a second opinion (it ran on the PE);
 * the hierarchical arrays (`sys_*_hier`): their flow has the taps and the
   antenna repair, but was not run again.
+
+# ASIC: IR drop
+
+Flow: `syn/asic/ir_drop.py chip_8_m4` (after `power.py chip_8_m4
+--keep-vcd`). Numbers in `syn/asic/ir_results.csv`, reports in
+`syn/build/asic/chip_8_m4/pnr/ir_drop/`.
+
+The supply reaches the cells through the power grid: the ring, the met5 and
+met4 stripes, the vias and the met1 rails of the cell rows, all of them
+resistors. Under load the voltage falls on the way in (VPWR), and ground
+rises on the way out (VGND); a cell sees the difference. OpenROAD's PDNSim
+solves the grid as a resistor network with the average current of every
+instance. The currents come from the power analysis of the compute workload
+(16 full tiles of random int8, the heaviest load the chip sees), with the
+switching activity of the gate-level simulation:
+
+* Standard cells and SRAMs: their power from the libraries with the
+  simulated activity. The SRAMs as modelled, which charge an access on every
+  clock edge: an upper end (75 of the 222 mW).
+* The PE macros have no power in their timing model; each gets its own power
+  from the flat power analysis (`power.tcl`, with the PE netlists).
+* Inside a PE: the chip-level analysis sees a PE as current drawn where the
+  chip's met5 stripes connect to its met4 straps. The drop from there to the
+  cells inside comes from a second analysis of the PE's own layout, with the
+  activity of the PE that draws the most and the supply exactly at those
+  connections. The two are added.
+* The simulation runs at 100 MHz (the SRAM models need the slower clock).
+  The grid is linear and dynamic power is proportional to the clock
+  (leakage is 0.2 mW), so the drop at the slow-corner frequency is the drop
+  at 100 MHz times f / 100 MHz.
+* The chip has no pads. Two ways of feeding it: from the edges of the core,
+  as from a pad ring (and as a block in a padframe such as Caravel's, the
+  usual way for sky130 designs, gets it), and from a flip-chip bump array
+  over the die (PDNSim's model: a bump every 140 um, every third one a
+  supply).
+
+What it costs in time: the flat timing analysis once more with the slow
+corner's library at 1.40 V instead of 1.60 V (`STA_SS_LIB` in
+`sta_flat.tcl`): 126 instead of 189 MHz, about 0.3 MHz per mV. The
+worst drop of VPWR and VGND together, applied to every cell (pessimistic:
+most cells see much less), gives the last column.
+
+| Slow corner, 189 MHz | VPWR drop | VGND rise | inside the PE | worst total | slow corner with it |
+|---|---|---|---|---|---|
+| **Supply from the core edges** | 15.6 mV | 15.3 mV | 1.2 mV | **32.1 mV (1.8 %)** | 179 MHz |
+| Flip-chip bumps | 2.9 mV | 4.8 mV | 1.2 mV | 8.8 mV (0.5 %) | 186 MHz |
+
+![IR drop map](chip_8_m4_ir.svg)
+
+## The first grid did not hold up
+
+The first analysis was of the chip as it was after sign-off (step 13), with
+the grid of the array continued over the core: a pair of 1.6 um met5
+stripes per row of PEs and a pair of 1.6 um met4 straps per channel between
+PE columns, no ring.
+
+| At 192 MHz | VPWR drop | VGND rise | inside the PE | worst total |
+|---|---|---|---|---|
+| Supply from the left and right edges | 194 mV | 187 mV | 2.2 mV | **383 mV (21 %)** |
+| Flip-chip bumps | 6.9 mV | 6.8 mV | 2.2 mV | 15.8 mV (0.9 %) |
+
+With bumps over the die every cell is close to a supply. From the edges, the
+current crosses the die on stripes that are too thin: a 1.6 um met5 stripe
+across the 2.7 mm die is about 1700 squares, some 48 ohms, and carries
+tens of mA. Worse, there were only 21 places to feed it: the flow trims
+stripes back to their last connection below, and most met5 stripes ended
+well inside the core, short of the edge (at a large SRAM or in the empty
+band along the edge). 0.38 V is more than the whole difference between the
+1.60 V and the 1.40 V library: the chip would not have run at any frequency
+the timing analysis reports.
+
+The grid was then tried in a quick loop before changing the flow: the routed
+database with its power grid ripped up and rebuilt with other parameters,
+PDNSim on it (a minute per try; the signal routes are ignored, so this only
+says what the grid can do). Supply from all four edges, 100 MHz:
+
+| Grid | VPWR | VGND |
+|---|---|---|
+| As routed (sources at the stripe ends that reach the left and right edge) | 101 mV | 97 mV |
+| Ring, stripes extended to it | 24 mV | 24 mV |
+| Ring, met5 stripes 6 um | 9.4 mV | 9.5 mV |
+| Ring, met5 stripes 4 um, two pairs per row of PEs | 6.9 mV | 7.1 mV |
+| Ring, met5 stripes 6 um, two pairs per row | 5.0 mV | 5.1 mV |
+| Ring, met5 10 um, met4 3.2 um | 5.8 mV | 5.8 mV |
+
+The chip now has (`pnr_top.tcl`):
+
+* **a power ring** around the core, 6 um wide (met5 along the top and
+  bottom, met4 along the sides), which every stripe and rail reaches
+  (`-extend_to_core_ring`): nothing is trimmed short of the edge, and the
+  supply can come in from all four sides. The die grows by 30 um in each
+  direction for it, to 2.82 x 3.52 mm = 9.92 mm2 (+2 %);
+* **met5 stripes 4 um wide, two pairs per row of PEs** (one pair of 1.6 um
+  before): 13 % of met5 instead of 2.6 %, the rest is left to signals and
+  the clock. The met4 straps in the channels stay as they were: wider ones
+  would take the vertical tracks the channels need.
+
+Routed, this costs 3 MHz (192 to 189 MHz): with the wider grid and the
+larger die the placement changed, and the slowest path is again in the
+output stream (output FIFO to the tile iterator of the output, -0.29 ns).
+The routing has no violations, the chip has no antenna violations left
+(the antenna loop now runs up to six rounds: 132, 11, 3, 2, 0 nets), and
+DRC and LVS are clean (see [Sign-off checks](#asic-sign-off-checks)).
+
+What this analysis does not cover:
+
+* **Dynamic IR drop**: the current within a cycle, which peaks at the clock
+  edge, against the decoupling capacitance of the decap cells and the
+  package. It is larger than the static drop.
+* **Electromigration**: the current density in each piece of the grid.
+  PDNSim can report the currents (`-enable_em`); they are not checked
+  against the process limits yet.
+* **Timing at each cell's own voltage**: the column above gives every cell
+  the worst drop.
+* **The SRAMs' own grid**: they are taken as current drawn at their power
+  pins.
 
 # FPGA prototype: Xilinx Zynq-7000 (Vivado)
 

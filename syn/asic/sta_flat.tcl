@@ -10,13 +10,20 @@
 #   STA_TOP_V, STA_TOP_SPEF         routed top level
 #   STA_MACRO_V, STA_MACRO_SPEF     routed macro
 #   STA_MACRO_CELL                  its module name
+#   STA_SS_LIB                      optional, see below
 #   PDK_ROOT
 # ------------------------------------------------------------------------------
 
 set ref [file join $::env(PDK_ROOT) sky130A libs.ref sky130_fd_sc_hd]
 define_corners tt ss ff
 read_liberty -corner tt [file join $ref lib sky130_fd_sc_hd__tt_025C_1v80.lib]
-read_liberty -corner ss [file join $ref lib sky130_fd_sc_hd__ss_100C_1v60.lib]
+# STA_SS_LIB: another library for the slow corner (ir_drop.py: the same corner
+# at a lower supply).
+if {[info exists ::env(STA_SS_LIB)]} {
+    read_liberty -corner ss $::env(STA_SS_LIB)
+} else {
+    read_liberty -corner ss [file join $ref lib sky130_fd_sc_hd__ss_100C_1v60.lib]
+}
 read_liberty -corner ff [file join $ref lib sky130_fd_sc_hd__ff_n40C_1v95.lib]
 # Macros with a single characterised corner (the SRAMs of the chip).
 if {[info exists ::env(STA_EXTRA_LIBS)]} {

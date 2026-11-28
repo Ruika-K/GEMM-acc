@@ -343,6 +343,30 @@ def main():
                         return False
         return True
 
+    def add(layer, net, r):
+        # A patch taken counts as a shape for the patches after it (two
+        # neighbouring nets patched towards each other once ended up 0.27 um
+        # apart, where met3 needs 0.3).
+        for bx in range(int(r[0] // 2), int(r[2] // 2) + 1):
+            for by in range(int(r[1] // 2), int(r[3] // 2) + 1):
+                bucket[(layer, bx, by)].append((net, r))
+
+    def added(c, box):
+        """The parts of candidate c outside the piece's bounding box: only
+        those are new. (The piece itself is where the router put it; checking
+        it as well once rejected every patch of a piece that sits diagonally
+        close to a via pad, which the rules allow.)"""
+        parts = []
+        if c[0] < box[0]:
+            parts.append((c[0], c[1], box[0], c[3]))
+        if c[2] > box[2]:
+            parts.append((box[2], c[1], c[2], c[3]))
+        if c[1] < box[1]:
+            parts.append((max(c[0], box[0]), c[1], min(c[2], box[2]), box[1]))
+        if c[3] > box[3]:
+            parts.append((max(c[0], box[0]), box[3], min(c[2], box[2]), c[3]))
+        return parts
+
     found = fixed = 0
     for (net, layer), rects in sorted(signal.items()):
         rule = layers[layer]
@@ -375,11 +399,12 @@ def main():
                         lo = snap(ext * k)
                         cands.append((x1, y1 - lo, x2, y2 + snap(ext - lo)))
             for c in cands:
-                if clear(layer, net, c, rule["spacing"]):
+                if all(clear(layer, net, part, rule["spacing"]) for part in added(c, (x1, y1, x2, y2))):
                     done = c
                     break
             if done:
                 fixed += 1
+                add(layer, net, done)
                 print(f"PATCH {layer} {done[0]:.3f} {done[1]:.3f} {done[2]:.3f} {done[3]:.3f}")
             else:
                 print(f"UNFIXED {layer} {net} {x1:.3f} {y1:.3f} {x2:.3f} {y2:.3f} {a:.4f}")
@@ -389,6 +414,7 @@ def main():
     for net, layer, sq in corners:
         if clear(layer, net, sq, layers[layer]["spacing"]):
             filled += 1
+            add(layer, net, sq)
             print(f"PATCH {layer} {sq[0]:.3f} {sq[1]:.3f} {sq[2]:.3f} {sq[3]:.3f}")
         else:
             print(f"UNFIXED {layer} {net} {sq[0]:.3f} {sq[1]:.3f} {sq[2]:.3f} {sq[3]:.3f} corner")
