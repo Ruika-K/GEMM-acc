@@ -3,8 +3,8 @@
 #
 # The routing and vias come from the DEF, drawn on the layers of the PDK's
 # LEF/DEF layer map; the cells (standard cells, SRAMs, the PE macro) are
-# placed as empty cells first and then filled with their layouts from GDS
-# files. Patches (rectangles, see min_area.py) are drawn into the top cell.
+# placed with their LEF geometry first and then replaced by their layouts
+# from GDS files. Patches (rectangles, see min_area.py) are drawn into the top cell.
 #
 #   -rd def=<file> -rd out=<file> -rd map=<layer map>
 #   -rd lefs="<lef> ..." -rd gds="<gds> ..." -rd patches=<file, optional>
@@ -17,7 +17,11 @@ cfg = opt.lefdef_config
 cfg.map_file = map
 cfg.read_lef_with_def = False
 cfg.lef_files = lefs.split()
-cfg.macro_resolution_mode = 1        # cells from GDS, not from LEF geometry
+# Every cell starts from its LEF geometry (mode 1: always, whatever FOREIGN
+# says) and the GDS files overwrite those they contain. A cell left out of the
+# GDS list (the SRAMs, for LVS) keeps its pins and obstructions only and is a
+# black box to the extraction.
+cfg.macro_resolution_mode = 1
 cfg.dbu = 0.001
 ly.read(globals()["def"], opt)
 top = ly.top_cell()
