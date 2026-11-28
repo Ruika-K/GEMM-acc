@@ -238,6 +238,15 @@ if {$macro} {
 global_connect
 global_route -congestion_iterations 50
 estimate_parasitics -global_routing
+# Antennas: while the chip is being made, a long wire that so far ends only
+# at gates collects charge from the etching and can break them. Diodes give
+# the charge a way out (sky130_fd_sc_hd__diode_2, on the do-not-synthesise
+# list and therefore kept from every other step). Without this, the routed
+# chip had 779 nets over the limits (signoff.py, antenna).
+unset_dont_use sky130_fd_sc_hd__diode_2
+repair_antennas sky130_fd_sc_hd__diode_2 -iterations 5
+set_dont_use sky130_fd_sc_hd__diode_2
+check_placement
 
 if {$droute} {
     detailed_route -output_drc [file join $out drc.rpt] -verbose 1

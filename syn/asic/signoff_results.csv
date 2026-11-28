@@ -1,0 +1,3 @@
+job,top,min_area_pieces,patched,drc_klayout,drc_klayout_rules,drc_magic,drc_magic_rules,lvs,lvs_devices,lvs_nets,antenna_nets,antenna_pins
+pe_m4_macro,gemm_pe,5,5,0,,0,,Circuits match uniquely,893,949,2,2
+chip_8_m4,gemm_top,,,,,,,,,,779,843
